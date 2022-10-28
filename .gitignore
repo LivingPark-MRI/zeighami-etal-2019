@@ -1,5 +1,19 @@
+# macOS system files
 .DS_Store
+
+# from livingpark-utils
 .ppmi_config
 .cache
-install.log
+
+# log files
+*.log
+
+# container images
+*.sif
+
+# MRI files
+*.nii
+*.mnc
+
+# subject ID lists
 zeighami-etal-2019-cohort-*.csv
