@@ -14,6 +14,7 @@
 # MRI files
 *.nii
 *.mnc
+*.xfm
 
 # subject ID lists
 zeighami-etal-2019-cohort-*.csv
