@@ -8,8 +8,15 @@
 # log files
 *.log
 
+# DBM-ICA output files
+out*
+
 # container images
 *.sif
+*.simg
+
+# old/unused code/notes
+ignore
 
 # MRI files
 *.nii
