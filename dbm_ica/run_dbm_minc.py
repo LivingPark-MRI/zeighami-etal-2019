@@ -19,7 +19,7 @@ DNAME_TEMPLATE_MAP = {
     'mni_icbm152_t1_tal_nlin_sym_09c': 'icbm152_model_09c',
     'mni_icbm152_t1_tal_nlin_sym_09a': 'icbm152_model_09a',
 }
-SUFFIX_TEMPLATE_MASK = '_mask'
+SUFFIX_TEMPLATE_MASK = '_mask' # MNI template naming convention
 
 EXT_NIFTI = '.nii'
 EXT_GZIP = '.gz'
@@ -27,21 +27,20 @@ EXT_MINC = '.mnc'
 EXT_TRANSFORM = '.xfm'
 
 SUFFIX_DENOISED = 'denoised'
-SUFFIX_NORM = 'norm'
-SUFFIX_MASK = 'mask'
-SUFFIX_EXTRACTED = 'extracted'
-SUFFIX_NONLINEAR = 'nl'
+SUFFIX_NORM = 'norm_lr'
+SUFFIX_MASK = '_mask' # binary mask
+SUFFIX_MASKED = 'masked' # masked brain
+SUFFIX_NONLINEAR = 'nlr'
 SUFFIX_DBM = 'dbm'
-SUFFIX_RESHAPED = 'reshaped'
+SUFFIX_RESAMPLED = 'resampled'
 
 PREFIX_RUN = '[RUN] '
 PREFIX_ERR = '[ERROR] '
 
 # TODO wrapper function that considers BIDS things
 # given a BIDS directory it computes DBM for all anatomical scans (?)
-# and saves output according to BIDS standdard too (what would that be like?)
-# TODO print start/end time
-# TODO write stdout/stderr to log file (from wrapper function?)
+# and saves output according to BIDS standard too
+# TODO write stdout and stderr to log file (from wrapper function?)
 
 @click.command()
 @click.argument('fpath_nifti', type=str)
@@ -104,11 +103,27 @@ def run_dbm_minc(fpath_nifti, dpath_out, dpath_share,
     def timestamp():
         run_command(['date'])
 
+    def apply_mask(fpath_orig, fpath_mask, dpath_out=None):
+        fpath_orig = Path(fpath_orig)
+        if dpath_out is None:
+            dpath_out = fpath_orig.parent
+        dpath_out = Path(dpath_out)
+        fpath_out = add_suffix(dpath_out / fpath_orig.name, SUFFIX_MASKED)
+        run_command([
+            'minccalc',
+            '-verbose',
+            '-expression', 'A[0]*A[1]',
+            fpath_orig,
+            fpath_mask,
+            fpath_out,
+        ])
+        return fpath_out
+
     try:
 
         timestamp()
 
-        # overwrite if needed
+        # override if needed
         if quiet:
             verbosity = 0
 
@@ -137,8 +152,8 @@ def run_dbm_minc(fpath_nifti, dpath_out, dpath_share,
         valid_file_formats = (EXT_NIFTI, f'{EXT_NIFTI}{EXT_GZIP}')
         if not str(fpath_nifti).endswith(valid_file_formats):
             print_error_and_exit(
-                f'Invalid file format for {fpath_nifti}'
-                f'. Valid extensions are: {valid_file_formats}'
+                f'Invalid file format for {fpath_nifti}. '
+                f'Valid extensions are: {valid_file_formats}'
             )
 
         # generate paths for template files and make sure they are valid
@@ -171,10 +186,12 @@ def run_dbm_minc(fpath_nifti, dpath_out, dpath_share,
                 fpath_raw_nii = dpath_tmp / fpath_nifti.name # keep last suffix
                 run_command(['ln', '-s', fpath_nifti, fpath_raw_nii])
 
-            # skip if output subdirectory already exists
+            # skip if output subdirectory already exists and is not empty
             dpath_out_sub = dpath_out / fpath_raw_nii.stem
             try:
                 dpath_out_sub.mkdir(parents=True, exist_ok=overwrite)
+                if len(list(dpath_out_sub.iterdir())) != 0:
+                    raise FileExistsError
             except FileExistsError:
                 if len(list(dpath_out_sub.iterdir())) != 0:
                     print_error_and_exit(
@@ -212,12 +229,14 @@ def run_dbm_minc(fpath_nifti, dpath_out, dpath_share,
             ])
 
             # get brain mask
-            fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK)
+            fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK, sep=SUFFIX_MASK[0])
             fpath_conf = dpath_beast_lib / beast_conf
             run_command([
                 'mincbeast',
+                '-flip',
                 '-fill',
                 '-median',
+                '-same_resolution',
                 '-conf', fpath_conf,
                 '-verbose',
                 dpath_beast_lib,
@@ -226,55 +245,57 @@ def run_dbm_minc(fpath_nifti, dpath_out, dpath_share,
             ])
 
             # extract brain
-            fpath_extracted = add_suffix(fpath_norm, SUFFIX_EXTRACTED)
-            run_command([
-                'minccalc',
-                '-verbose',
-                '-expression', 'A[0]*A[1]',
-                fpath_norm,
-                fpath_mask,
-                fpath_extracted,
-            ])
+            fpath_masked = apply_mask(fpath_norm, fpath_mask)
+
+            # extract template brain
+            fpath_template_masked = apply_mask(
+                fpath_template, 
+                fpath_template_mask,
+                dpath_out=dpath_tmp,
+            )
 
             # perform nonlinear registration
-            fpath_nonlinear = add_suffix(fpath_extracted, SUFFIX_NONLINEAR)
+            fpath_nonlinear = add_suffix(fpath_masked, SUFFIX_NONLINEAR)
             fpath_nonlinear_transform = fpath_nonlinear.with_suffix(EXT_TRANSFORM)
             run_command([
                 'nlfit_s',
                 '-verbose',
                 '-source_mask', fpath_mask,
                 '-target_mask', fpath_template_mask,
-                fpath_extracted,
-                fpath_template,
+                fpath_masked,
+                fpath_template_masked,
                 fpath_nonlinear_transform,
                 fpath_nonlinear,
             ])
 
-            # get DBM map
-            fpath_dbm = add_suffix(fpath_nonlinear, SUFFIX_DBM)
+            # get DBM map (not template space)
+            fpath_dbm_tmp = add_suffix(fpath_nonlinear, SUFFIX_DBM)
             run_command([
                 'pipeline_dbm.pl',
                 '-verbose',
                 '--model', fpath_template,
                 fpath_nonlinear_transform,
+                fpath_dbm_tmp,
+            ])
+
+            # resample to template space
+            fpath_dbm = add_suffix(fpath_dbm_tmp, SUFFIX_RESAMPLED)
+            run_command([
+                'mincresample',
+                '-like', fpath_template,
+                fpath_dbm_tmp,
                 fpath_dbm,
             ])
 
-            # need this otherwise nifti file has wrong affine
-            fpath_dbm_reshaped = add_suffix(fpath_dbm, SUFFIX_RESHAPED)
-            run_command([
-                'mincreshape',
-                '-dimorder', 'xspace,yspace,zspace',
-                fpath_dbm,
-                fpath_dbm_reshaped,
-            ])
+            # apply mask
+            fpath_dbm_masked = apply_mask(fpath_dbm, fpath_template_mask)
 
             # convert back to nifti
-            fpath_dbm_nii = fpath_dbm_reshaped.with_suffix(EXT_NIFTI)
+            fpath_dbm_nii = fpath_dbm_masked.with_suffix(EXT_NIFTI)
             run_command([
                 'mnc2nii',
                 '-nii',
-                fpath_dbm_reshaped,
+                fpath_dbm_masked,
                 fpath_dbm_nii,
             ])
 
@@ -287,9 +308,9 @@ def run_dbm_minc(fpath_nifti, dpath_out, dpath_share,
             else:
                 fpaths_to_copy = [
                     fpath_denoised,     # denoised
-                    fpath_mask,         # brain mask
-                    fpath_extracted,    # linearly registered
-                    fpath_nonlinear,    # nonlinearly registered
+                    fpath_mask,         # brain mask (after linear registration)
+                    fpath_masked,       # linearly registered (masked)
+                    fpath_nonlinear,    # nonlinearly registered (masked)
                     fpath_dbm_nii,      # DBM map
                 ]
 
