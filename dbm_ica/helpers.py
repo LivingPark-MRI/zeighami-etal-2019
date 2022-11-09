@@ -2,10 +2,29 @@
 import subprocess
 import sys
 
+from pathlib import Path
+from typing import Union
+
 import click
 
 PREFIX_RUN = '[RUN] '
 PREFIX_ERROR = '[ERROR] '
+
+def add_suffix(
+    path: Union[Path, str], 
+    suffix: str, 
+    sep: Union[str, None] = '.',
+) -> Path:
+    if sep is not None:
+        if suffix.startswith(sep):
+            suffix = suffix[len(sep):]
+    else:
+        sep = ''
+    path = Path(path)
+    return path.parent / f'{path.stem}{sep}{suffix}{path.suffix}'
+
+def process_path(path: str) -> Path:
+    return Path(path).expanduser().absolute()
 
 class scriptHelper():
 

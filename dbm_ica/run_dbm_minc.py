@@ -4,11 +4,10 @@ import traceback
 from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Union
 
 import click
 
-from helpers import scriptHelper
+from helpers import add_suffix, process_path, scriptHelper
 
 DEFAULT_VERBOSITY = 2
 DEFAULT_BEAST_CONF = 'default.1mm.conf'
@@ -318,22 +317,6 @@ def run_dbm_minc(fpath_nifti, dpath_out, fpath_log, dpath_share,
 
         except Exception:
             helper.print_error_and_exit(traceback.format_exc())
-
-def process_path(path: str) -> Path:
-    return Path(path).expanduser().absolute()
-
-def add_suffix(
-    path: Union[Path, str], 
-    suffix: str, 
-    sep: Union[str, None] = '.',
-) -> Path:
-    if sep is not None:
-        if suffix.startswith(sep):
-            suffix = suffix[len(sep):]
-    else:
-        sep = ''
-    path = Path(path)
-    return path.parent / f'{path.stem}{sep}{suffix}{path.suffix}'
 
 if __name__ == '__main__':
     run_dbm_minc()
