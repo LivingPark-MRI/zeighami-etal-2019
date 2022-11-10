@@ -26,7 +26,7 @@ def add_suffix(
 def process_path(path: str) -> Path:
     return Path(path).expanduser().absolute()
 
-class scriptHelper():
+class ScriptHelper():
 
     def __init__(
             self,
@@ -83,7 +83,14 @@ class scriptHelper():
         self.echo(message, prefix=self.prefix_error, text_color=text_color)
         sys.exit(exit_code)
 
-    def run_command(self, args: list[str], shell=False, stdout=None, stderr=None):
+    def run_command(
+            self,
+            args: list[str],
+            shell=False,
+            stdout=None,
+            stderr=None,
+            silent=False,
+        ):
         """Run a shell command.
 
         Parameters
@@ -96,15 +103,17 @@ class scriptHelper():
             Standard output for executed program, by default None
         stderr : file object, int, or None, optional
             Standard error for execute program, by default None
+        silent : bool, optional
+            Whether to execute the command without printing the command or the output
         """
         args = [str(arg) for arg in args if arg != '']
         args_str = ' '.join(args)
-        if (self.verbosity > 0) or self.dry_run:
+        if not silent and ((self.verbosity > 0) or self.dry_run):
             self.echo(f'{args_str}', prefix=PREFIX_RUN, text_color='yellow',
                       color_prefix_only=self.dry_run)
         if not self.dry_run:
             if stdout is None:
-                if self.verbosity < 2:
+                if silent or self.verbosity < 2:
                     # note: this doesn't silence everything because some MINC
                     #       tools print a lot of output to stderr
                     stdout = subprocess.DEVNULL
