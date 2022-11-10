@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import annotations
 import subprocess
 import sys
 
@@ -6,6 +7,8 @@ from pathlib import Path
 from typing import Union
 
 import click
+
+DEFAULT_VERBOSITY = 2
 
 PREFIX_RUN = '[RUN] '
 PREFIX_ERROR = '[ERROR] '
@@ -26,20 +29,59 @@ def add_suffix(
 def process_path(path: str) -> Path:
     return Path(path).expanduser().absolute()
 
+def add_options(options):
+    def _add_options(func):
+        for option in reversed(options):
+            func = option(func)
+        return func
+    return _add_options
+
+def add_common_options():
+    common_options = [
+        click.option('--logfile', 'fpath_log', type=str, callback=callback_path,
+                help='Path to log file'),
+        click.option('--overwrite/--no-overwrite', default=False,
+                help='Overwrite existing result files.'),
+        click.option('--dry-run/--no-dry-run', default=False,
+                    help='Print shell commands without executing them.'),
+        click.option('-v', '--verbose', 'verbosity', count=True, 
+                    default=DEFAULT_VERBOSITY,
+                    help='Set/increase verbosity level (cumulative). '
+                        f'Default level: {DEFAULT_VERBOSITY}.'),
+        click.option('--quiet', is_flag=True, default=False,
+                    help='Suppress output whenever possible. '
+                        'Has priority over -v/--verbose flags.'),
+    ]
+    return add_options(common_options)
+
+def callback_path(ctx, param, value):
+    if value is None:
+        return None
+    else:
+        return process_path(value)
+
 class ScriptHelper():
 
     def __init__(
             self,
             file_log=None,
             verbosity=2,
+            quiet=False,
             dry_run=False,
+            overwrite=False,
             prefix_run=PREFIX_RUN,
             prefix_error=PREFIX_ERROR,
         ) -> None:
 
+        # quiet overrides verbosity
+        if quiet:
+            verbosity = 0
+
         self.file_log = file_log
         self.verbosity = verbosity
+        self.quiet = quiet
         self.dry_run = dry_run
+        self.overwrite = overwrite
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
     
@@ -134,3 +176,16 @@ class ScriptHelper():
         """Print the current time.
         """
         self.run_command(['date'])
+
+    def check_nonempty(self, dpath: Path):
+        try:
+            if not dpath.exists():
+                dpath.mkdir(parents=True)
+            if len(list(dpath.iterdir())) != 0 and not self.overwrite:
+                raise FileExistsError
+        except FileExistsError:
+            self.print_error_and_exit(
+                f'Output directory {dpath} exists. '
+                'Use --overwrite to overwrite'
+            )
+        return dpath

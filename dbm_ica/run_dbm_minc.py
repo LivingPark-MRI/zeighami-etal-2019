@@ -7,9 +7,9 @@ from tempfile import TemporaryDirectory
 
 import click
 
-from helpers import add_suffix, process_path, ScriptHelper
+from helpers import add_common_options, add_suffix, callback_path, ScriptHelper
 
-DEFAULT_VERBOSITY = 2
+# DEFAULT_VERBOSITY = 2
 DEFAULT_BEAST_CONF = 'default.1mm.conf'
 DEFAULT_TEMPLATE = 'mni_icbm152_t1_tal_nlin_sym_09c'
 
@@ -42,41 +42,31 @@ PREFIX_ERR = '[ERROR] '
 # and saves output according to BIDS standard too
 
 @click.command()
-@click.argument('fpath_nifti', type=str)
-@click.argument('dpath_out', type=str, default='.')
-@click.option('--logfile', 'fpath_log', type=str,
-              help='Path to log file')
-@click.option('--share-dir', 'dpath_share', envvar=ENV_VAR_DPATH_SHARE,
+@click.argument('fpath_nifti', type=str, callback=callback_path)
+@click.argument('dpath_out', type=str, default='.', callback=callback_path)
+@click.option('--share-dir', 'dpath_share', 
+              callback=callback_path, envvar=ENV_VAR_DPATH_SHARE,
               help='Path to directory containing BEaST library and '
                    f'anatomical models. Uses ${ENV_VAR_DPATH_SHARE} '
                    'environment variable if not specified.')
-@click.option('--template-dir', 'dpath_templates',
+@click.option('--template-dir', 'dpath_templates', callback=callback_path,
               help='Directory containing anatomical templates.')
 @click.option('--template', 'template_prefix', default=DEFAULT_TEMPLATE,
               help='Prefix for anatomical model files. '
                    f'Valid names: {list(DNAME_TEMPLATE_MAP.keys())}. '
                    f'Default: {DEFAULT_TEMPLATE}.')
-@click.option('--beast-lib-dir', 'dpath_beast_lib', 
+@click.option('--beast-lib-dir', 'dpath_beast_lib', callback=callback_path,
               help='Path to library directory for mincbeast.')
 @click.option('--beast-conf', default=DEFAULT_BEAST_CONF,
               help='Name of configuration file for mincbeast. '
                    'Default: {DEFAULT_BEAST_CONF}.')
 @click.option('--save-all/--save-subset', default=True,
               help='Save all intermediate files')
-@click.option('--overwrite/--no-overwrite', default=False,
-              help='Overwrite existing result files.')
-@click.option('--dry-run/--no-dry-run', default=False,
-              help='Print shell commands without executing them.')
-@click.option('-v', '--verbose', 'verbosity', count=True, 
-              default=DEFAULT_VERBOSITY,
-              help='Set/increase verbosity level (cumulative). '
-                   f'Default level: {DEFAULT_VERBOSITY}.')
-@click.option('--quiet', is_flag=True, default=False,
-              help='Suppress output whenever possible. '
-                   'Has priority over -v/--verbose flags.')
-def run_dbm_minc(fpath_nifti, dpath_out, fpath_log, dpath_share, 
-                 dpath_templates, template_prefix, dpath_beast_lib, beast_conf, 
-                 overwrite, save_all, dry_run, verbosity, quiet):
+@add_common_options()
+def run_dbm_minc(fpath_nifti: Path, dpath_out: Path, fpath_log: Path, 
+                 dpath_share: Path, dpath_templates: Path, template_prefix, 
+                 dpath_beast_lib: Path, beast_conf, 
+                 overwrite, save_all, dry_run, verbosity, quiet, **kwargs):
 
     def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
         fpath_orig = Path(fpath_orig)
@@ -95,45 +85,35 @@ def run_dbm_minc(fpath_nifti, dpath_out, fpath_log, dpath_share,
         return fpath_out
 
     if fpath_log is not None:
-        fpath_log = process_path(fpath_log)
         fpath_log.parent.mkdir(parents=True, exist_ok=True)
 
     with fpath_log.open('w') if (fpath_log is not None) else nullcontext() as file_log, \
         TemporaryDirectory() as dpath_tmp:
+
+        helper = ScriptHelper(
+            file_log=file_log,
+            verbosity=verbosity,
+            quiet=quiet,
+            dry_run=dry_run,
+            overwrite=overwrite,
+        )
+
         try:
 
+            helper.timestamp()
+            
             dpath_tmp = Path(dpath_tmp)
 
-            helper = ScriptHelper(
-                file_log=file_log,
-                verbosity=verbosity,
-                dry_run=dry_run,
-            )
-
-            helper.timestamp()
-
-            # override if needed
-            if quiet:
-                verbosity = 0
-
-            # process paths
-            fpath_nifti = process_path(fpath_nifti)
-            dpath_out = process_path(dpath_out)
+            # make sure necessary paths are given
             if dpath_share is None:
                 if (dpath_templates is None) or (dpath_beast_lib is None):
                     helper.print_error_and_exit('If --share-dir is not given, '
                                         'both --template-dir and --beast-lib-dir '
                                         'must be specified.')
-            else:
-                dpath_share = process_path(dpath_share)
             if dpath_templates is None:
                 dpath_templates = dpath_share / DNAME_TEMPLATE_MAP[template_prefix]
-            else:
-                dpath_templates = process_path(dpath_templates)
             if dpath_beast_lib is None:
                 dpath_beast_lib = dpath_share / DNAME_BEAST_LIB
-            else:
-                dpath_beast_lib = process_path(dpath_beast_lib)
 
             # make sure input file exists and has valid extension
             if not fpath_nifti.exists():
@@ -173,16 +153,7 @@ def run_dbm_minc(fpath_nifti, dpath_out, fpath_log, dpath_share,
                 helper.run_command(['ln', '-s', fpath_nifti, fpath_raw_nii])
 
             # skip if output subdirectory already exists and is not empty
-            dpath_out_sub = dpath_out / fpath_raw_nii.stem
-            try:
-                dpath_out_sub.mkdir(parents=True, exist_ok=overwrite)
-                if (len(list(dpath_out_sub.iterdir())) != 0) and not overwrite:
-                    raise FileExistsError
-            except FileExistsError:
-                helper.print_error_and_exit(
-                    f'Output directory {dpath_out} is not empty. '
-                    'Use --overwrite to overwrite.'
-                )
+            dpath_out_sub = helper.check_nonempty(dpath_out / fpath_raw_nii.stem)
 
             # convert to minc format
             fpath_raw = dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)

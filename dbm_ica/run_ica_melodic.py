@@ -7,65 +7,40 @@ from tempfile import TemporaryDirectory
 
 import click
 
-from helpers import process_path, ScriptHelper
+from helpers import add_common_options, callback_path, process_path, ScriptHelper
 
 DEFAULT_VERBOSITY = 2
 PREFIX_MERGED = 'dbm_merged'
 
 @click.command()
-@click.argument('fpath_filenames')
-@click.argument('dpath_out', default='.')
+@click.argument('fpath_filenames', callback=callback_path)
+@click.argument('dpath_out', default='.', callback=callback_path)
 @click.option('-d', '--dim', type=int, help='Number of PCA components')
 @click.option('-n', '--n-components', type=int, help='Number of ICA components')
-@click.option('--logfile', 'fpath_log', type=str,
-              help='Path to log file')
-@click.option('--overwrite/--no-overwrite', default=False,
-              help='Overwrite existing result files.')
-@click.option('--dry-run/--no-dry-run', default=False,
-              help='Print shell commands without executing them.')
-@click.option('-v', '--verbose', 'verbosity', count=True, 
-              default=DEFAULT_VERBOSITY,
-              help='Set/increase verbosity level (cumulative). '
-                   f'Default level: {DEFAULT_VERBOSITY}.')
-@click.option('--quiet', is_flag=True, default=False,
-              help='Suppress output whenever possible. '
-                   'Has priority over -v/--verbose flags.')
-def run_ica_melodic(fpath_filenames, dpath_out, dim, n_components, fpath_log, 
-                    overwrite, dry_run, verbosity, quiet):
+@add_common_options()
+def run_ica_melodic(fpath_filenames: Path, dpath_out: Path, dim, n_components, 
+                    fpath_log: Path, overwrite, dry_run, verbosity, quiet, **kwargs):
 
     if fpath_log is not None:
-        fpath_log = process_path(fpath_log)
         fpath_log.parent.mkdir(parents=True, exist_ok=True)
+
     with fpath_log.open('w') if (fpath_log is not None) else nullcontext() as file_log, \
         TemporaryDirectory() as dpath_tmp:
 
+        helper = ScriptHelper(
+            file_log=file_log,
+            verbosity=verbosity,
+            quiet=quiet,
+            dry_run=dry_run,
+            overwrite=overwrite,
+        )
+
         try:
 
-            # override
-            if quiet:
-                verbosity = 0
-
-            helper = ScriptHelper(
-                file_log=file_log,
-                verbosity=verbosity,
-                dry_run=dry_run,
-            )
-
             dpath_tmp = Path(dpath_tmp)
-            dpath_out = process_path(dpath_out)
-
-            try:
-                dpath_out.mkdir(parents=True, exist_ok=overwrite)
-                if len(list(dpath_out.iterdir())) != 0 and not overwrite:
-                    raise FileExistsError
-            except FileExistsError:
-                helper.print_error_and_exit(
-                    f'Output directory {dpath_out} is not empty. '
-                    'Use --overwrite to overwrite.'
-                )
+            helper.check_nonempty(dpath_out)
 
             fpaths_nii_tmp = []
-            fpath_filenames = process_path(fpath_filenames)
             with fpath_filenames.open('r') as file_filenames:
 
                 for line in file_filenames:
@@ -80,12 +55,7 @@ def run_ica_melodic(fpath_filenames, dpath_out, dim, n_components, fpath_log,
 
                     fpath_nii_tmp = dpath_tmp / fname_nii.name
                     helper.run_command(
-                        [
-                            'ln',
-                            '-s',
-                            fname_nii,
-                            fpath_nii_tmp,
-                        ],
+                        ['ln', '-s', fname_nii, fpath_nii_tmp],
                         silent=True,
                     )
 
