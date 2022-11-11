@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 from __future__ import annotations
+
 import subprocess
 import sys
+import traceback
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Union
 
@@ -57,8 +60,40 @@ def add_common_options():
 def callback_path(ctx, param, value):
     if value is None:
         return None
-    else:
-        return process_path(value)
+    return process_path(value)
+
+def with_helper(func):
+    def _with_helper(
+        fpath_log: Path = None, 
+        verbosity: int = DEFAULT_VERBOSITY,
+        quiet: bool = False,
+        dry_run: bool = False,
+        overwrite: bool = False,
+        prefix_run: str = PREFIX_RUN,
+        prefix_error: str = PREFIX_ERROR,
+        **kwargs,
+    ):
+
+        with_log = (fpath_log is not None)
+        if with_log:
+            fpath_log.parent.mkdir(parents=True, exist_ok=overwrite)
+
+        with fpath_log.open('w') if with_log else nullcontext() as file_log:
+            helper = ScriptHelper(
+                file_log=file_log,
+                verbosity=verbosity,
+                quiet=quiet,
+                dry_run=dry_run,
+                overwrite=overwrite,
+                prefix_run=prefix_run,
+                prefix_error=prefix_error,
+            )
+            try:
+                func(helper=helper, **kwargs)
+            except Exception:
+                helper.print_error_and_exit(traceback.format_exc())
+
+    return _with_helper
 
 class ScriptHelper():
 
@@ -173,8 +208,7 @@ class ScriptHelper():
                 )
 
     def timestamp(self):
-        """Print the current time.
-        """
+        """Print the current time."""
         self.run_command(['date'])
 
     def check_nonempty(self, dpath: Path):
