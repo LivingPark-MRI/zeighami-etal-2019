@@ -6,6 +6,7 @@ import sys
 import traceback
 
 from contextlib import nullcontext
+from functools import wraps
 from pathlib import Path
 from typing import Union
 
@@ -101,6 +102,7 @@ def callback_path(ctx, param, value):
     return process_path(value)
 
 def with_helper(func):
+    @wraps(func)
     def _with_helper(
         fpath_log: Path = None, 
         verbosity: int = DEFAULT_VERBOSITY,
@@ -134,6 +136,7 @@ def with_helper(func):
     return _with_helper
 
 def check_dbm_inputs(func):
+    @wraps(func)
     def _check_dbm_inputs(
         helper: ScriptHelper,
         dpath_share: Union[None, Path] = None,
