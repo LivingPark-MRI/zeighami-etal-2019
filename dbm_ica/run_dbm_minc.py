@@ -4,6 +4,8 @@ from tempfile import TemporaryDirectory
 
 import click
 
+from bids import BIDSLayout
+
 from helpers import (
     add_common_options, 
     add_dbm_minc_options,
@@ -15,6 +17,7 @@ from helpers import (
     EXT_NIFTI,
     EXT_TRANSFORM,
     ScriptHelper,
+    SUFFIX_T1,
     with_helper,
 )
 
@@ -26,18 +29,58 @@ SUFFIX_NONLINEAR = 'nlr'
 SUFFIX_DBM = 'dbm'
 SUFFIX_RESAMPLED = 'resampled'
 
-@click.command()
+@click.group()
+def cli():
+    return
+
+@cli.command()
+@click.argument('dpath_bids', type=str, callback=callback_path)
+@click.argument('dpath_out', type=str, default='.', callback=callback_path)
+@add_dbm_minc_options()
+@add_common_options()
+@with_helper
+def bids(dpath_bids: Path, dpath_out: Path, helper: ScriptHelper, **kwargs):
+    
+    # make sure input directory exists
+    if not dpath_bids.exists():
+        helper.print_error_and_exit(f'BIDS directory not found: {dpath_bids}')
+
+    # create output directory if it doesn't exist yet
+    dpath_out.mkdir(parents=True, exist_ok=True)
+
+    bids_layout = BIDSLayout(dpath_bids)
+
+    fpaths_t1 = bids_layout.get(
+        extension=f'{EXT_NIFTI}{EXT_GZIP}'.strip('.'), 
+        suffix=SUFFIX_T1, 
+        return_type='filename',
+    )
+
+    helper.echo(len(fpaths_t1))
+
+    for fpath_t1 in fpaths_t1:
+        run_dbm_minc_single_file(
+            fpath_nifti=fpath_t1,
+            dpath_out=dpath_out,
+            helper=helper,
+            **kwargs,
+        )
+
+@cli.command()
 @click.argument('fpath_nifti', type=str, callback=callback_path)
 @click.argument('dpath_out', type=str, default='.', callback=callback_path)
 @add_dbm_minc_options()
 @add_common_options()
 @with_helper
 @check_dbm_inputs
-def run_dbm_minc(fpath_nifti: Path, dpath_out: Path, 
-                 dpath_templates: Path, template_prefix: str, 
-                 fpath_template: Path, fpath_template_mask: Path,
-                 dpath_beast_lib: Path, fpath_conf: Path, 
-                 save_all, helper: ScriptHelper, **kwargs):
+def file(**kwargs):
+    run_dbm_minc_single_file(**kwargs)
+
+def run_dbm_minc_single_file(fpath_nifti: Path, dpath_out: Path, 
+                             dpath_templates: Path, template_prefix: str, 
+                             fpath_template: Path, fpath_template_mask: Path,
+                             dpath_beast_lib: Path, fpath_conf: Path, 
+                             save_all, helper: ScriptHelper):
 
     def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
         fpath_orig = Path(fpath_orig)
@@ -199,4 +242,4 @@ def run_dbm_minc(fpath_nifti: Path, dpath_out: Path,
         helper.timestamp()
 
 if __name__ == '__main__':
-    run_dbm_minc()
+    cli()
