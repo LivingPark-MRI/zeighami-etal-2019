@@ -6,27 +6,17 @@ import click
 
 from helpers import (
     add_common_options, 
+    add_dbm_minc_options,
     add_suffix, 
     callback_path, 
+    check_dbm_inputs,
+    EXT_GZIP,
+    EXT_MINC,
+    EXT_NIFTI,
+    EXT_TRANSFORM,
     ScriptHelper,
     with_helper,
 )
-
-DEFAULT_BEAST_CONF = 'default.1mm.conf'
-DEFAULT_TEMPLATE = 'mni_icbm152_t1_tal_nlin_sym_09c'
-
-ENV_VAR_DPATH_SHARE = 'MNI_DATAPATH'
-DNAME_BEAST_LIB = 'beast-library-1.1'
-DNAME_TEMPLATE_MAP = {
-    'mni_icbm152_t1_tal_nlin_sym_09c': 'icbm152_model_09c',
-    'mni_icbm152_t1_tal_nlin_sym_09a': 'icbm152_model_09a',
-}
-SUFFIX_TEMPLATE_MASK = '_mask' # MNI template naming convention
-
-EXT_NIFTI = '.nii'
-EXT_GZIP = '.gz'
-EXT_MINC = '.mnc'
-EXT_TRANSFORM = '.xfm'
 
 SUFFIX_DENOISED = 'denoised'
 SUFFIX_NORM = 'norm_lr'
@@ -36,40 +26,18 @@ SUFFIX_NONLINEAR = 'nlr'
 SUFFIX_DBM = 'dbm'
 SUFFIX_RESAMPLED = 'resampled'
 
-PREFIX_RUN = '[RUN] '
-PREFIX_ERR = '[ERROR] '
-
-# TODO wrapper function that considers BIDS things
-# given a BIDS directory it computes DBM for all anatomical scans (?)
-# and saves output according to BIDS standard too
-
 @click.command()
 @click.argument('fpath_nifti', type=str, callback=callback_path)
 @click.argument('dpath_out', type=str, default='.', callback=callback_path)
-@click.option('--share-dir', 'dpath_share', 
-              callback=callback_path, envvar=ENV_VAR_DPATH_SHARE,
-              help='Path to directory containing BEaST library and '
-                   f'anatomical models. Uses ${ENV_VAR_DPATH_SHARE} '
-                   'environment variable if not specified.')
-@click.option('--template-dir', 'dpath_templates', callback=callback_path,
-              help='Directory containing anatomical templates.')
-@click.option('--template', 'template_prefix', default=DEFAULT_TEMPLATE,
-              help='Prefix for anatomical model files. '
-                   f'Valid names: {list(DNAME_TEMPLATE_MAP.keys())}. '
-                   f'Default: {DEFAULT_TEMPLATE}.')
-@click.option('--beast-lib-dir', 'dpath_beast_lib', callback=callback_path,
-              help='Path to library directory for mincbeast.')
-@click.option('--beast-conf', default=DEFAULT_BEAST_CONF,
-              help='Name of configuration file for mincbeast. '
-                   'Default: {DEFAULT_BEAST_CONF}.')
-@click.option('--save-all/--save-subset', default=True,
-              help='Save all intermediate files')
+@add_dbm_minc_options()
 @add_common_options()
 @with_helper
+@check_dbm_inputs
 def run_dbm_minc(fpath_nifti: Path, dpath_out: Path, 
-                 dpath_share: Path, dpath_templates: Path, template_prefix, 
-                 dpath_beast_lib: Path, beast_conf, save_all, 
-                 helper: ScriptHelper, **kwargs):
+                 dpath_templates: Path, template_prefix: str, 
+                 fpath_template: Path, fpath_template_mask: Path,
+                 dpath_beast_lib: Path, fpath_conf: Path, 
+                 save_all, helper: ScriptHelper, **kwargs):
 
     def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
         fpath_orig = Path(fpath_orig)
@@ -89,16 +57,6 @@ def run_dbm_minc(fpath_nifti: Path, dpath_out: Path,
 
     helper.timestamp()
 
-     # make sure necessary paths are given
-    if dpath_share is None and (dpath_templates is None or dpath_beast_lib is None):
-            helper.print_error_and_exit('If --share-dir is not given, both '
-                                        '--template-dir and --beast-lib-dir '
-                                        'must be specified.')
-    if dpath_templates is None:
-        dpath_templates = dpath_share / DNAME_TEMPLATE_MAP[template_prefix]
-    if dpath_beast_lib is None:
-        dpath_beast_lib = dpath_share / DNAME_BEAST_LIB
-
     # make sure input file exists and has valid extension
     if not fpath_nifti.exists():
         helper.print_error_and_exit(f'Nifti file not found: {fpath_nifti}')
@@ -107,23 +65,6 @@ def run_dbm_minc(fpath_nifti: Path, dpath_out: Path,
         helper.print_error_and_exit(
             f'Invalid file format for {fpath_nifti}. '
             f'Valid extensions are: {valid_file_formats}'
-        )
-
-    # generate paths for template files and make sure they are valid
-    fpath_template = dpath_templates / f'{template_prefix}{EXT_MINC}'
-    fpath_template_mask = add_suffix(fpath_template, 
-                                    SUFFIX_TEMPLATE_MASK, sep=None)
-    if not fpath_template.exists():
-        helper.print_error_and_exit(f'Template file not found: {fpath_template}')
-    if not fpath_template_mask.exists():
-        helper.print_error_and_exit(
-            f'Template mask file not found: {fpath_template_mask}'
-        )
-
-    # make sure beast library can be found
-    if not dpath_beast_lib.exists():
-        helper.print_error_and_exit(
-            f'BEaST library directory not found: {dpath_beast_lib}'
         )
 
     with TemporaryDirectory() as dpath_tmp:
@@ -165,7 +106,6 @@ def run_dbm_minc(fpath_nifti: Path, dpath_out: Path,
 
         # get brain mask
         fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK, sep=SUFFIX_MASK[0])
-        fpath_conf = dpath_beast_lib / beast_conf
         helper.run_command([
             'mincbeast',
             '-flip',

@@ -12,9 +12,24 @@ from typing import Union
 import click
 
 DEFAULT_VERBOSITY = 2
-
 PREFIX_RUN = '[RUN] '
 PREFIX_ERROR = '[ERROR] '
+
+EXT_NIFTI = '.nii'
+EXT_GZIP = '.gz'
+EXT_MINC = '.mnc'
+EXT_TRANSFORM = '.xfm'
+SUFFIX_T1 = 'T1w'
+
+SUFFIX_TEMPLATE_MASK = '_mask' # MNI template naming convention
+ENV_VAR_DPATH_SHARE = 'MNI_DATAPATH'
+DEFAULT_BEAST_CONF = 'default.1mm.conf'
+DEFAULT_TEMPLATE = 'mni_icbm152_t1_tal_nlin_sym_09c'
+DNAME_BEAST_LIB = 'beast-library-1.1'
+DNAME_TEMPLATE_MAP = {
+    'mni_icbm152_t1_tal_nlin_sym_09c': 'icbm152_model_09c',
+    'mni_icbm152_t1_tal_nlin_sym_09a': 'icbm152_model_09a',
+}
 
 def add_suffix(
     path: Union[Path, str], 
@@ -57,6 +72,29 @@ def add_common_options():
     ]
     return add_options(common_options)
 
+def add_dbm_minc_options():
+    dbm_minc_options = [
+        click.option('--share-dir', 'dpath_share', 
+              callback=callback_path, envvar=ENV_VAR_DPATH_SHARE,
+              help='Path to directory containing BEaST library and '
+                   f'anatomical models. Uses ${ENV_VAR_DPATH_SHARE} '
+                   'environment variable if not specified.'),
+        click.option('--template-dir', 'dpath_templates', callback=callback_path,
+                    help='Directory containing anatomical templates.'),
+        click.option('--template', 'template_prefix', default=DEFAULT_TEMPLATE,
+                     help='Prefix for anatomical model files. '
+                          f'Valid names: {list(DNAME_TEMPLATE_MAP.keys())}. '
+                          f'Default: {DEFAULT_TEMPLATE}.'),
+        click.option('--beast-lib-dir', 'dpath_beast_lib', callback=callback_path,
+                     help='Path to library directory for mincbeast.'),
+        click.option('--beast-conf', default=DEFAULT_BEAST_CONF,
+                     help='Name of configuration file for mincbeast. '
+                          f'Default: {DEFAULT_BEAST_CONF}.'),
+        click.option('--save-all/--save-subset', default=True,
+                     help='Save all intermediate files')
+    ]
+    return add_options(dbm_minc_options)
+
 def callback_path(ctx, param, value):
     if value is None:
         return None
@@ -94,6 +132,62 @@ def with_helper(func):
                 helper.print_error_and_exit(traceback.format_exc())
 
     return _with_helper
+
+def check_dbm_inputs(func):
+    def _check_dbm_inputs(
+        helper: ScriptHelper,
+        dpath_share: Union[None, Path] = None,
+        dpath_templates: Union[None, Path] = None,
+        template_prefix: str = DEFAULT_TEMPLATE,
+        dpath_beast_lib: str = DNAME_BEAST_LIB,
+        beast_conf: str = DEFAULT_BEAST_CONF,
+        save_all=False,
+        **kwargs,
+    ):
+
+        # make sure necessary paths are given
+        if dpath_share is None and (dpath_templates is None or dpath_beast_lib is None):
+                helper.print_error_and_exit('If --share-dir is not given, both '
+                                            '--template-dir and --beast-lib-dir '
+                                            'must be specified.')
+        if dpath_templates is None:
+            dpath_templates = dpath_share / DNAME_TEMPLATE_MAP[template_prefix]
+        if dpath_beast_lib is None:
+            dpath_beast_lib = dpath_share / DNAME_BEAST_LIB
+
+        # generate paths for template files and make sure they are valid
+        fpath_template = dpath_templates / f'{template_prefix}{EXT_MINC}'
+        fpath_template_mask = add_suffix(fpath_template, 
+                                        SUFFIX_TEMPLATE_MASK, sep=None)
+        if not fpath_template.exists():
+            helper.print_error_and_exit(f'Template file not found: {fpath_template}')
+        if not fpath_template_mask.exists():
+            helper.print_error_and_exit(
+                f'Template mask file not found: {fpath_template_mask}'
+            )
+
+        # make sure beast library and config file can be found
+        if not dpath_beast_lib.exists():
+            helper.print_error_and_exit(
+                f'BEaST library directory not found: {dpath_beast_lib}'
+            )
+        fpath_conf = dpath_beast_lib / beast_conf
+        if not fpath_conf.exists():
+            helper.print_error_and_exit(f'mincbeast config file not found: {fpath_conf}')
+
+        func(
+            helper=helper,
+            dpath_templates=dpath_templates,
+            template_prefix=template_prefix,
+            fpath_template=fpath_template,
+            fpath_template_mask=fpath_template_mask,
+            dpath_beast_lib=dpath_beast_lib,
+            fpath_conf=fpath_conf,
+            save_all=save_all,
+            **kwargs,
+        )
+
+    return _check_dbm_inputs
 
 class ScriptHelper():
 
