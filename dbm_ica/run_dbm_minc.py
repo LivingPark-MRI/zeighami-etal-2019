@@ -47,9 +47,12 @@ def cli():
 @cli.command()
 @click.argument('dpath_bids', type=str, callback=callback_path)
 @click.argument('fpath_out', type=str, callback=callback_path)
+@click.option('--absolute/--relative', default=False,
+              help='Save absolute paths to output file.',
+)
 @add_common_options()
 @with_helper
-def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
+def bids_generate(dpath_bids: Path, fpath_out: Path, absolute: bool, helper: ScriptHelper):
 
     # make sure input directory exists
     if not dpath_bids.exists():
@@ -78,16 +81,19 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
     # write paths to output file
     with fpath_out.open('w') as file_out:
         for fpath_t1 in fpaths_t1:
+            if not absolute:
+                fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
             file_out.write(f'{fpath_t1}\n')
 
 @cli.command()
 @click.argument('fpath_bids_list', type=str, callback=callback_path)
 @click.argument('dpath_out', type=str, default='.', callback=callback_path)
+@click.option('-d', '--dir-bids', 'dpath_bids', callback=callback_path)
 @click.option('-i', '--i-file', 'i_file_single', type=click.IntRange(min=0))
 @click.option('-r', '--range', 'i_file_range', type=click.IntRange(min=0), nargs=2)
 @click.option('-c', '--container', 'fpath_container', callback=callback_path)
 @click.option('-j', '--job', 'job_type', type=click.Choice(VALID_JOB_TYPES, case_sensitive=False))
-@click.option('--job-location', envvar='JOB_LOCATION')
+@click.option('--job-resource', envvar='JOB_RESOURCE')
 @add_dbm_minc_options()
 @add_common_options()
 @with_helper
@@ -95,11 +101,12 @@ def bids_run(
     fpath_bids_list: Path,
     dpath_out: Path,
     helper: ScriptHelper,
-    i_file_single: int,
+    dpath_bids: Union[Path, None],
+    i_file_single: Union[int, None],
     i_file_range: Union[tuple, None],
     fpath_container: Union[Path, None],
     job_type: str,
-    job_location: str,
+    job_resource: str,
     **kwargs,
     ):
 
@@ -148,7 +155,13 @@ def bids_run(
                 if i_file > i_file_max:
                     break
 
-                fpath_t1 = line.strip()
+                fpath_t1 = Path(line.strip())
+                if not fpath_t1.exists():
+                    if dpath_bids is None:
+                        raise FileNotFoundError(
+                            f'{fpath_t1}. Specify -d/--dir-bids if input file contains relative paths',
+                        )
+                    fpath_t1 = dpath_bids / fpath_t1
 
                 # generate path to BIDS-like output directory
                 bids_entities = parse_file_entities(fpath_t1)
@@ -172,10 +185,10 @@ def file(**kwargs):
 
 @check_dbm_inputs
 def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path, 
-                             dpath_templates: Path, template_prefix: str, 
-                             fpath_template: Path, fpath_template_mask: Path,
-                             dpath_beast_lib: Path, fpath_conf: Path, 
-                             save_all, **kwargs):
+                  dpath_templates: Path, template_prefix: str, 
+                  fpath_template: Path, fpath_template_mask: Path,
+                  dpath_beast_lib: Path, fpath_conf: Path, 
+                  save_all, **kwargs):
 
     def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
         fpath_orig = Path(fpath_orig)
