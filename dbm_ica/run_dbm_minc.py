@@ -231,7 +231,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             helper.run_command(['ln', '-s', fpath_nifti, fpath_raw_nii])
 
         # skip if output subdirectory already exists and is not empty
-        dpath_out_sub = helper.check_nonempty(dpath_out / fpath_raw_nii.stem)
+        helper.check_nonempty(dpath_out)
 
         # convert to minc format
         fpath_raw = dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
@@ -339,11 +339,11 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
                 'cp',
                 '-vfp', # verbose, force overwrite, preserve metadata
                 fpath_source,
-                dpath_out_sub,
+                dpath_out,
             ])
 
         # list files in output directory
-        helper.run_command(['ls', '-lh', dpath_out_sub])
+        helper.run_command(['ls', '-lh', dpath_out])
 
 if __name__ == '__main__':
     cli()
