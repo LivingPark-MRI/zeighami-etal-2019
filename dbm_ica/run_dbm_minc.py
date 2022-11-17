@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Union
 
 import click
 
 from bids import BIDSLayout
+from bids.layout import parse_file_entities
 
 from helpers import (
     add_common_options, 
@@ -12,13 +14,16 @@ from helpers import (
     add_suffix, 
     callback_path, 
     check_dbm_inputs,
+    ScriptHelper,
+    with_helper,
+)
+
+from helpers import (
     EXT_GZIP,
     EXT_MINC,
     EXT_NIFTI,
     EXT_TRANSFORM,
-    ScriptHelper,
     SUFFIX_T1,
-    with_helper,
 )
 
 SUFFIX_DENOISED = 'denoised'
@@ -29,42 +34,132 @@ SUFFIX_NONLINEAR = 'nlr'
 SUFFIX_DBM = 'dbm'
 SUFFIX_RESAMPLED = 'resampled'
 
+JOB_TYPE_SLURM = 'slurm'
+JOB_TYPE_SGE = 'sge'
+VALID_JOB_TYPES = [JOB_TYPE_SLURM, JOB_TYPE_SGE]
+DEFAULT_JOB_MEMORY = '8G'
+DEFAULT_JOB_TIME = '0:20:00'
+
 @click.group()
 def cli():
     return
 
 @cli.command()
 @click.argument('dpath_bids', type=str, callback=callback_path)
-@click.argument('dpath_out', type=str, default='.', callback=callback_path)
-@add_dbm_minc_options()
+@click.argument('fpath_out', type=str, callback=callback_path)
 @add_common_options()
 @with_helper
-def bids(dpath_bids: Path, dpath_out: Path, helper: ScriptHelper, **kwargs):
-    
+def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
+
     # make sure input directory exists
     if not dpath_bids.exists():
         helper.print_error_and_exit(f'BIDS directory not found: {dpath_bids}')
 
-    # create output directory if it doesn't exist yet
-    dpath_out.mkdir(parents=True, exist_ok=True)
+    # throw error if output file already exists
+    if fpath_out.exists() and not helper.overwrite:
+        helper.print_error_and_exit(
+            f'File {fpath_out} already exists. Use --overwrite to overwrite.'
+        )
+    else:
+        # create output directory
+        fpath_out.parent.mkdir(parents=True, exist_ok=True)
 
-    bids_layout = BIDSLayout(dpath_bids)
+    bids_layout = BIDSLayout(dpath_bids, validate=False)
 
+    # get all T1 files
     fpaths_t1 = bids_layout.get(
         extension=f'{EXT_NIFTI}{EXT_GZIP}'.strip('.'), 
-        suffix=SUFFIX_T1, 
+        suffix=SUFFIX_T1,
         return_type='filename',
     )
 
-    helper.echo(len(fpaths_t1))
+    helper.echo(f'Found {len(fpaths_t1)} T1 files')
 
-    for fpath_t1 in fpaths_t1:
-        run_dbm_minc_single_file(
-            fpath_nifti=fpath_t1,
-            dpath_out=dpath_out,
-            helper=helper,
-            **kwargs,
-        )
+    # write paths to output file
+    with fpath_out.open('w') as file_out:
+        for fpath_t1 in fpaths_t1:
+            file_out.write(f'{fpath_t1}\n')
+
+@cli.command()
+@click.argument('fpath_bids_list', type=str, callback=callback_path)
+@click.argument('dpath_out', type=str, default='.', callback=callback_path)
+@click.option('-i', '--i-file', 'i_file_single', type=click.IntRange(min=0))
+@click.option('-r', '--range', 'i_file_range', type=click.IntRange(min=0), nargs=2)
+@click.option('-c', '--container', 'fpath_container', callback=callback_path)
+@click.option('-j', '--job', 'job_type', type=click.Choice(VALID_JOB_TYPES, case_sensitive=False))
+@click.option('--job-location', envvar='JOB_LOCATION')
+@add_dbm_minc_options()
+@add_common_options()
+@with_helper
+def bids_run(
+    fpath_bids_list: Path,
+    dpath_out: Path,
+    helper: ScriptHelper,
+    i_file_single: int,
+    i_file_range: Union[tuple, None],
+    fpath_container: Union[Path, None],
+    job_type: str,
+    job_location: str,
+    **kwargs
+    ):
+
+    if i_file_single is not None:
+        i_file_range = (i_file_single, i_file_single)
+
+    if i_file_range is not None:
+        i_file_min = min(i_file_range)
+        i_file_max = max(i_file_range)
+    else:
+        i_file_min = -float('inf')
+        i_file_max = float('inf')
+
+    # submit job arrays if multiple input files
+    if job_type is not None:
+
+        # make sure container exists
+        if not fpath_container.exists():
+            raise FileNotFoundError(fpath_container)
+
+        # get path to this file
+        fpath_script = Path(__file__).parent.resolve()
+    
+        # TODO
+        if job_type == JOB_TYPE_SGE:
+            # call container
+            # mount this script + input file (read-only) + output directory
+            # run script in container 
+            pass
+        else:
+            raise NotImplementedError(f'Not implemented for job type {job_type} yet')
+    
+    # otherwise run the pipeline directly
+    else:
+
+        # TODO add dataset_description.json (?)
+        helper.check_nonempty(dpath_out)
+        layout_out = BIDSLayout(dpath_out, validate=False)
+
+        with fpath_bids_list.open('r') as file_bids_list:
+
+            for i_file, line in enumerate(file_bids_list):
+
+                if i_file < i_file_min:
+                    continue
+                if i_file > i_file_max:
+                    break
+
+                fpath_t1 = line.strip()
+
+                # generate path to BIDS-like output directory
+                bids_entities = parse_file_entities(fpath_t1)
+                dpath_out_bids = Path(layout_out.build_path(bids_entities)).parent
+
+                run_dbm_minc_single_file(
+                    fpath_nifti=fpath_t1,
+                    dpath_out=dpath_out_bids,
+                    helper=helper,
+                    **kwargs,
+                )
 
 @cli.command()
 @click.argument('fpath_nifti', type=str, callback=callback_path)
@@ -76,11 +171,11 @@ def bids(dpath_bids: Path, dpath_out: Path, helper: ScriptHelper, **kwargs):
 def file(**kwargs):
     run_dbm_minc_single_file(**kwargs)
 
-def run_dbm_minc_single_file(fpath_nifti: Path, dpath_out: Path, 
+def run_dbm_minc_single_file(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path, 
                              dpath_templates: Path, template_prefix: str, 
                              fpath_template: Path, fpath_template_mask: Path,
                              dpath_beast_lib: Path, fpath_conf: Path, 
-                             save_all, helper: ScriptHelper):
+                             save_all, **kwargs):
 
     def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
         fpath_orig = Path(fpath_orig)
