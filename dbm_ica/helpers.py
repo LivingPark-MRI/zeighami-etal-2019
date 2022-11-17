@@ -129,7 +129,9 @@ def with_helper(func):
                 prefix_error=prefix_error,
             )
             try:
+                helper.timestamp()
                 func(helper=helper, **kwargs)
+                helper.timestamp()
             except Exception:
                 helper.print_error_and_exit(traceback.format_exc())
 
