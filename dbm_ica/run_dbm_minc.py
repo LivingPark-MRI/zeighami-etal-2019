@@ -47,27 +47,22 @@ def cli():
 @cli.command()
 @click.argument('dpath_bids', type=str, callback=callback_path)
 @click.argument('fpath_out', type=str, callback=callback_path)
-@click.option('--absolute/--relative', default=False,
-              help='Save absolute paths to output file.',
-)
 @add_common_options()
 @with_helper
-def bids_generate(dpath_bids: Path, fpath_out: Path, absolute: bool, helper: ScriptHelper):
+def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
 
     # make sure input directory exists
     if not dpath_bids.exists():
         helper.print_error_and_exit(f'BIDS directory not found: {dpath_bids}')
 
-    # throw error if output file already exists
-    if fpath_out.exists() and not helper.overwrite:
-        helper.print_error_and_exit(
-            f'File {fpath_out} already exists. Use --overwrite to overwrite.'
-        )
-    else:
-        # create output directory
-        fpath_out.parent.mkdir(parents=True, exist_ok=True)
+    # check if file exists
+    helper.check_file(fpath_out)
+    
+    # create output directory
+    fpath_out.parent.mkdir(parents=True, exist_ok=True)
 
-    bids_layout = BIDSLayout(dpath_bids, validate=False)
+    # create index for BIDS directory
+    bids_layout = BIDSLayout(dpath_bids)
 
     # get all T1 files
     fpaths_t1 = bids_layout.get(
@@ -81,14 +76,11 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, absolute: bool, helper: Scr
     # write paths to output file
     with fpath_out.open('w') as file_out:
         for fpath_t1 in fpaths_t1:
-            if not absolute:
-                fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
             file_out.write(f'{fpath_t1}\n')
 
 @cli.command()
 @click.argument('fpath_bids_list', type=str, callback=callback_path)
 @click.argument('dpath_out', type=str, default='.', callback=callback_path)
-@click.option('-d', '--dir-bids', 'dpath_bids', callback=callback_path)
 @click.option('-i', '--i-file', 'i_file_single', type=click.IntRange(min=0))
 @click.option('-r', '--range', 'i_file_range', type=click.IntRange(min=0), nargs=2)
 @click.option('-c', '--container', 'fpath_container', callback=callback_path)
@@ -101,7 +93,6 @@ def bids_run(
     fpath_bids_list: Path,
     dpath_out: Path,
     helper: ScriptHelper,
-    dpath_bids: Union[Path, None],
     i_file_single: Union[int, None],
     i_file_range: Union[tuple, None],
     fpath_container: Union[Path, None],
@@ -125,7 +116,7 @@ def bids_run(
 
         # make sure container exists
         if not fpath_container.exists():
-            raise FileNotFoundError(fpath_container)
+            helper.print_error_and_exit(f'Container not found: {fpath_container}')
 
         # get path to this file
         fpath_script = Path(__file__).parent.resolve()
@@ -143,7 +134,7 @@ def bids_run(
     else:
 
         # TODO add dataset_description.json (?)
-        helper.check_nonempty(dpath_out)
+        helper.check_dir(dpath_out)
         layout_out = BIDSLayout(dpath_out, validate=False)
 
         with fpath_bids_list.open('r') as file_bids_list:
@@ -156,12 +147,6 @@ def bids_run(
                     break
 
                 fpath_t1 = Path(line.strip())
-                if not fpath_t1.exists():
-                    if dpath_bids is None:
-                        raise FileNotFoundError(
-                            f'{fpath_t1}. Specify -d/--dir-bids if input file contains relative paths',
-                        )
-                    fpath_t1 = dpath_bids / fpath_t1
 
                 # generate path to BIDS-like output directory
                 bids_entities = parse_file_entities(fpath_t1)
@@ -231,7 +216,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             helper.run_command(['ln', '-s', fpath_nifti, fpath_raw_nii])
 
         # skip if output subdirectory already exists and is not empty
-        helper.check_nonempty(dpath_out)
+        helper.check_dir(dpath_out)
 
         # convert to minc format
         fpath_raw = dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)

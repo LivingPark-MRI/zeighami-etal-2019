@@ -310,7 +310,7 @@ class ScriptHelper():
         """Print the current time."""
         self.run_command(['date'])
 
-    def check_nonempty(self, dpath: Path):
+    def check_dir(self, dpath: Path):
         try:
             if not dpath.exists():
                 dpath.mkdir(parents=True)
@@ -318,7 +318,12 @@ class ScriptHelper():
                 raise FileExistsError
         except FileExistsError:
             self.print_error_and_exit(
-                f'Output directory {dpath} exists. '
-                'Use --overwrite to overwrite'
+                f'Directory {dpath} is not empty. Use --overwrite to overwrite.'
             )
         return dpath
+
+    def check_file(self, fpath: Path):
+        if fpath.exists() and not self.overwrite:
+            self.print_error_and_exit(
+                f'File {fpath} exists. Use --overwrite to overwrite.'
+            )
