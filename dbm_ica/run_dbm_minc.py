@@ -100,7 +100,7 @@ def bids_run(
     fpath_container: Union[Path, None],
     job_type: str,
     job_location: str,
-    **kwargs
+    **kwargs,
     ):
 
     if i_file_single is not None:
@@ -154,7 +154,7 @@ def bids_run(
                 bids_entities = parse_file_entities(fpath_t1)
                 dpath_out_bids = Path(layout_out.build_path(bids_entities)).parent
 
-                run_dbm_minc_single_file(
+                _run_dbm_minc(
                     fpath_nifti=fpath_t1,
                     dpath_out=dpath_out_bids,
                     helper=helper,
@@ -167,11 +167,11 @@ def bids_run(
 @add_dbm_minc_options()
 @add_common_options()
 @with_helper
-@check_dbm_inputs
 def file(**kwargs):
-    run_dbm_minc_single_file(**kwargs)
+    _run_dbm_minc(**kwargs)
 
-def run_dbm_minc_single_file(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path, 
+@check_dbm_inputs
+def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path, 
                              dpath_templates: Path, template_prefix: str, 
                              fpath_template: Path, fpath_template_mask: Path,
                              dpath_beast_lib: Path, fpath_conf: Path, 
@@ -192,8 +192,6 @@ def run_dbm_minc_single_file(helper: ScriptHelper, fpath_nifti: Path, dpath_out:
             fpath_out,
         ])
         return fpath_out
-
-    helper.timestamp()
 
     # make sure input file exists and has valid extension
     if not fpath_nifti.exists():
@@ -333,8 +331,6 @@ def run_dbm_minc_single_file(helper: ScriptHelper, fpath_nifti: Path, dpath_out:
 
         # list files in output directory
         helper.run_command(['ls', '-lh', dpath_out_sub])
-
-        helper.timestamp()
 
 if __name__ == '__main__':
     cli()
