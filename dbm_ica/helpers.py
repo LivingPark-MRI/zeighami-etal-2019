@@ -57,8 +57,9 @@ def add_options(options):
 
 def add_common_options():
     common_options = [
-        click.option('--logfile', 'fpath_log', type=str, callback=callback_path,
+        click.option('--logfile', 'fpath_log', callback=callback_path,
                 help='Path to log file'),
+        click.option('--rename-log/--no-rename-log', default=False),
         click.option('--overwrite/--no-overwrite', default=False,
                 help='Overwrite existing result files.'),
         click.option('--dry-run/--no-dry-run', default=False,
@@ -91,7 +92,7 @@ def add_dbm_minc_options():
         click.option('--beast-conf', default=DEFAULT_BEAST_CONF,
                      help='Name of configuration file for mincbeast. '
                           f'Default: {DEFAULT_BEAST_CONF}.'),
-        click.option('--save-all/--save-subset', default=True,
+        click.option('--save-all/--save-subset', default=False,
                      help='Save all intermediate files')
     ]
     return add_options(dbm_minc_options)
@@ -105,6 +106,7 @@ def with_helper(func):
     @wraps(func)
     def _with_helper(
         fpath_log: Path = None, 
+        rename_log: bool = False,
         verbosity: int = DEFAULT_VERBOSITY,
         quiet: bool = False,
         dry_run: bool = False,
@@ -116,7 +118,7 @@ def with_helper(func):
 
         with_log = (fpath_log is not None)
         if with_log:
-            fpath_log.parent.mkdir(parents=True, exist_ok=overwrite)
+            fpath_log.parent.mkdir(parents=True, exist_ok=True)
 
         with fpath_log.open('w') if with_log else nullcontext() as file_log:
             helper = ScriptHelper(
@@ -131,9 +133,25 @@ def with_helper(func):
             try:
                 helper.timestamp()
                 func(helper=helper, **kwargs)
-                helper.timestamp()
+
+                if rename_log:
+                    if helper.nifti_prefix is None:
+                        helper.print_error_and_exit(
+                            "'nifti_prefix' attribute must be set if rename_log is True"
+                        )
+                    
+                    fpath_source = Path(file_log.name).resolve()
+                    fpath_destination = fpath_source.parent / f'{helper.nifti_prefix}.log'
+                    helper.run_command(
+                        ['mv', '-v', fpath_source, fpath_destination],
+                        force=True,
+                    )
+
             except Exception:
                 helper.print_error_and_exit(traceback.format_exc())
+
+            finally:
+                helper.timestamp()
 
     return _with_helper
 
@@ -218,6 +236,8 @@ class ScriptHelper():
         self.overwrite = overwrite
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
+
+        self.nifti_prefix = None
     
     def echo(self, message, prefix='', text_color=None, color_prefix_only=False):
         """
@@ -266,6 +286,7 @@ class ScriptHelper():
             stdout=None,
             stderr=None,
             silent=False,
+            force=False,
         ):
         """Run a shell command.
 
@@ -281,13 +302,15 @@ class ScriptHelper():
             Standard error for execute program, by default None
         silent : bool, optional
             Whether to execute the command without printing the command or the output
+        force : bool, optional
+            Force running the command, ignore self.dry_run
         """
         args = [str(arg) for arg in args if arg != '']
         args_str = ' '.join(args)
         if not silent and ((self.verbosity > 0) or self.dry_run):
             self.echo(f'{args_str}', prefix=PREFIX_RUN, text_color='yellow',
                       color_prefix_only=self.dry_run)
-        if not self.dry_run:
+        if force or (not self.dry_run):
             if stdout is None:
                 if silent or self.verbosity < 2:
                     # note: this doesn't silence everything because some MINC
@@ -308,18 +331,21 @@ class ScriptHelper():
 
     def timestamp(self):
         """Print the current time."""
-        self.run_command(['date'])
+        self.run_command(['date'], force=True)
+
+    def mkdir(self, path: Union[str, Path], parents=True, exist_ok=None):
+        if exist_ok is None:
+            exist_ok = self.overwrite
+        if not self.dry_run:
+            Path(path).mkdir(parents=parents, exist_ok=exist_ok)
 
     def check_dir(self, dpath: Path):
-        try:
-            if not dpath.exists():
-                dpath.mkdir(parents=True)
-            if len(list(dpath.iterdir())) != 0 and not self.overwrite:
-                raise FileExistsError
-        except FileExistsError:
-            self.print_error_and_exit(
-                f'Directory {dpath} is not empty. Use --overwrite to overwrite.'
-            )
+        if dpath.exists() and (not self.overwrite):
+            if sum([p.is_file() for p in dpath.rglob('*')]) != 0:
+                self.print_error_and_exit(
+                    f'Directory {dpath} exists and is not empty. '
+                    'Use --overwrite to overwrite.'
+                )
         return dpath
 
     def check_file(self, fpath: Path):

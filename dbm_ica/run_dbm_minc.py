@@ -1,12 +1,19 @@
 #!/usr/bin/env python
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, NamedTemporaryFile
 from typing import Union
 
 import click
 
 from bids import BIDSLayout
 from bids.layout import parse_file_entities
+
+# TODO write to proc_status.csv
+# with columns ID/session/modality/suffix
+# and pass/fail for each step (conversion, denoise, linear, beast, nonlinear, DBM, etc.)
+# use pandas?
+
+# TODO move logs directory outside of output directory
 
 from helpers import (
     add_common_options, 
@@ -34,11 +41,20 @@ SUFFIX_NONLINEAR = 'nlr'
 SUFFIX_DBM = 'dbm'
 SUFFIX_RESAMPLED = 'resampled'
 
+MIN_I_FILE = 1
+DNAME_LOGS = 'logs'
+
+# job settings
 JOB_TYPE_SLURM = 'slurm'
 JOB_TYPE_SGE = 'sge'
 VALID_JOB_TYPES = [JOB_TYPE_SLURM, JOB_TYPE_SGE]
-DEFAULT_JOB_MEMORY = '8G'
+DEFAULT_JOB_MEMORY = '12G'
 DEFAULT_JOB_TIME = '0:20:00'
+VARNAME_I_FILE = 'I_FILE'
+BINDPATH_SCRIPTS = '/mnt/scripts'
+BINDPATH_BIDS_DATA = '/mnt/bids'
+BINDPATH_OUT = '/mnt/out'
+BINDPATH_BIDS_LIST = '/mnt/bids_list'
 
 @click.group()
 def cli():
@@ -59,7 +75,7 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
     helper.check_file(fpath_out)
     
     # create output directory
-    fpath_out.parent.mkdir(parents=True, exist_ok=True)
+    helper.mkdir(fpath_out.parent, exist_ok=True)
 
     # create index for BIDS directory
     bids_layout = BIDSLayout(dpath_bids)
@@ -76,20 +92,25 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
     # write paths to output file
     with fpath_out.open('w') as file_out:
         for fpath_t1 in fpaths_t1:
+            fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
             file_out.write(f'{fpath_t1}\n')
 
 @cli.command()
-@click.argument('fpath_bids_list', type=str, callback=callback_path)
-@click.argument('dpath_out', type=str, default='.', callback=callback_path)
-@click.option('-i', '--i-file', 'i_file_single', type=click.IntRange(min=0))
-@click.option('-r', '--range', 'i_file_range', type=click.IntRange(min=0), nargs=2)
+@click.argument('dpath_bids', callback=callback_path)
+@click.argument('fpath_bids_list', callback=callback_path)
+@click.argument('dpath_out', default='.', callback=callback_path)
+@click.option('-i', '--i-file', 'i_file_single', type=click.IntRange(min=MIN_I_FILE))
+@click.option('-r', '--range', 'i_file_range', type=click.IntRange(min=MIN_I_FILE), nargs=2)
 @click.option('-c', '--container', 'fpath_container', callback=callback_path)
 @click.option('-j', '--job', 'job_type', type=click.Choice(VALID_JOB_TYPES, case_sensitive=False))
+@click.option('-m', '--memory', 'job_memory', default=DEFAULT_JOB_MEMORY)
+@click.option('-t', '--time', 'job_time', default=DEFAULT_JOB_TIME)
 @click.option('--job-resource', envvar='JOB_RESOURCE')
 @add_dbm_minc_options()
 @add_common_options()
 @with_helper
 def bids_run(
+    dpath_bids: Path,
     fpath_bids_list: Path,
     dpath_out: Path,
     helper: ScriptHelper,
@@ -98,8 +119,12 @@ def bids_run(
     fpath_container: Union[Path, None],
     job_type: str,
     job_resource: str,
+    job_memory: str,
+    job_time: str,
     **kwargs,
     ):
+
+    helper.mkdir(dpath_out, exist_ok=True)
 
     if i_file_single is not None:
         i_file_range = (i_file_single, i_file_single)
@@ -108,45 +133,114 @@ def bids_run(
         i_file_min = min(i_file_range)
         i_file_max = max(i_file_range)
     else:
-        i_file_min = -float('inf')
-        i_file_max = float('inf')
+        i_file_min = MIN_I_FILE
+        with fpath_bids_list.open() as file_bids_list:
+            i_file_max = MIN_I_FILE
+            for _ in file_bids_list:
+                i_file_max += 1
 
-    # submit job arrays if multiple input files
+    # submit job array
     if job_type is not None:
 
-        # make sure container exists
+        # make sure job account/queue is specified
+        if job_resource is None:
+            helper.print_error_and_exit(
+                '--job-resource must be specified when --job is given.',
+            )
+
+        # make sure container is specified and exists
+        if fpath_container is None:
+            helper.print_error_and_exit('--container must be specified when --job is given')
         if not fpath_container.exists():
             helper.print_error_and_exit(f'Container not found: {fpath_container}')
 
         # get path to this file
-        fpath_script = Path(__file__).parent.resolve()
+        fpath_script = Path(__file__).resolve()
+        bindpath_script = Path(BINDPATH_SCRIPTS) / fpath_script.name
+        dpath_scripts = fpath_script.parent
+
+        script_command = [
+            f'{bindpath_script} bids-run',
+            f'{BINDPATH_BIDS_DATA} {BINDPATH_BIDS_LIST} {BINDPATH_OUT}',
+            f'-i ${VARNAME_I_FILE}',
+            f'--logfile {BINDPATH_OUT}/{DNAME_LOGS}/dbm_minc-${{{VARNAME_I_FILE}}}.log',
+            '--rename-log',
+            '--overwrite' if helper.overwrite else '',
+        ]
+
+        singularity_command = [
+            'singularity', 'run',
+            f'--bind {dpath_scripts}:{BINDPATH_SCRIPTS}:ro',
+            f'--bind {dpath_bids}:{BINDPATH_BIDS_DATA}:ro',
+            f'--bind {fpath_bids_list}:{BINDPATH_BIDS_LIST}:ro',
+            f'--bind {dpath_out}:{BINDPATH_OUT}',
+            f'--bind /data/origami/livingpark/zeighami-etal-2019/dbm_ica/ignore/tmp_home:/home/bic/mwang', # TODO remove
+            f'{fpath_container}',
+            ' '.join(script_command),
+        ]
     
-        # TODO
-        if job_type == JOB_TYPE_SGE:
-            # call container
-            # mount this script + input file (read-only) + output directory
-            # run script in container 
-            pass
-        else:
-            raise NotImplementedError(f'Not implemented for job type {job_type} yet')
+        # temporary file for job submission script
+        with NamedTemporaryFile('w+t') as file_tmp:
+
+            fpath_submission_tmp = Path(file_tmp.name)
+
+            if job_type == JOB_TYPE_SGE:
+
+                varname_array_job_id = 'SGE_TASK_ID'
+
+                job_command_args = [
+                    'qsub',
+                    '-q', job_resource,
+                    '-t', f'{i_file_min}-{i_file_max}:1',
+                    '-l', f'h_vmem={job_memory}',
+                    '-l', f'h_rt={job_time}',
+                    fpath_submission_tmp,
+                ]
+
+            else:
+                raise NotImplementedError(f'Not implemented for job type {job_type} yet')
+
+            # job submission script
+            submission_file_lines = [
+                '#!/bin/bash',
+                f'{VARNAME_I_FILE}=${varname_array_job_id}',
+                ' '.join(singularity_command),
+            ]
+
+            # write to file
+            for submission_file_line in submission_file_lines:
+                file_tmp.write(f'{submission_file_line}\n')
+            file_tmp.flush()
+            fpath_submission_tmp.chmod(0o744)
+
+            # print file
+            helper.run_command(['cat', fpath_submission_tmp])
+
+            # submit
+            helper.run_command(job_command_args)
     
     # otherwise run the pipeline directly
     else:
 
-        # TODO add dataset_description.json (?)
-        helper.check_dir(dpath_out)
         layout_out = BIDSLayout(dpath_out, validate=False)
 
         with fpath_bids_list.open('r') as file_bids_list:
 
-            for i_file, line in enumerate(file_bids_list):
+            for i_file, line in enumerate(file_bids_list, start=MIN_I_FILE):
 
                 if i_file < i_file_min:
                     continue
                 if i_file > i_file_max:
                     break
 
-                fpath_t1 = Path(line.strip())
+                # remove newline
+                fpath_t1_relative = line.strip()
+
+                # skip empty lines
+                if fpath_t1_relative == '':
+                    continue
+
+                fpath_t1 = dpath_bids / fpath_t1_relative
 
                 # generate path to BIDS-like output directory
                 bids_entities = parse_file_entities(fpath_t1)
@@ -214,6 +308,9 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
         else:
             fpath_raw_nii = dpath_tmp / fpath_nifti.name # keep last suffix
             helper.run_command(['ln', '-s', fpath_nifti, fpath_raw_nii])
+
+        # for renaming the logfile, if needed
+        helper.nifti_prefix = fpath_raw_nii.stem
 
         # skip if output subdirectory already exists and is not empty
         helper.check_dir(dpath_out)
@@ -319,6 +416,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
                 fpath_dbm_nii,      # DBM map
             ]
 
+        helper.mkdir(dpath_out)
         for fpath_source in fpaths_to_copy:
             helper.run_command([
                 'cp',
