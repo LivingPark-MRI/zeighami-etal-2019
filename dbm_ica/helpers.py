@@ -6,15 +6,32 @@ import sys
 import traceback
 
 from contextlib import nullcontext
+from functools import wraps
 from pathlib import Path
-from typing import Union
+from typing import Union, TextIO
 
 import click
 
 DEFAULT_VERBOSITY = 2
-
 PREFIX_RUN = '[RUN] '
 PREFIX_ERROR = '[ERROR] '
+DONE_MESSAGE = '[DONE]'
+
+EXT_NIFTI = '.nii'
+EXT_GZIP = '.gz'
+EXT_MINC = '.mnc'
+EXT_TRANSFORM = '.xfm'
+SUFFIX_T1 = 'T1w'
+
+SUFFIX_TEMPLATE_MASK = '_mask' # MNI template naming convention
+ENV_VAR_DPATH_SHARE = 'MNI_DATAPATH'
+DEFAULT_BEAST_CONF = 'default.1mm.conf'
+DEFAULT_TEMPLATE = 'mni_icbm152_t1_tal_nlin_sym_09c'
+DNAME_BEAST_LIB = 'beast-library-1.1'
+DNAME_TEMPLATE_MAP = {
+    'mni_icbm152_t1_tal_nlin_sym_09c': 'icbm152_model_09c',
+    'mni_icbm152_t1_tal_nlin_sym_09a': 'icbm152_model_09a',
+}
 
 def add_suffix(
     path: Union[Path, str], 
@@ -41,21 +58,44 @@ def add_options(options):
 
 def add_common_options():
     common_options = [
-        click.option('--logfile', 'fpath_log', type=str, callback=callback_path,
-                help='Path to log file'),
+        click.option('--logfile', 'fpath_log', callback=callback_path,
+                     help='Path to log file'),
         click.option('--overwrite/--no-overwrite', default=False,
-                help='Overwrite existing result files.'),
+                     help='Overwrite existing result files.'),
         click.option('--dry-run/--no-dry-run', default=False,
-                    help='Print shell commands without executing them.'),
+                     help='Print shell commands without executing them.'),
         click.option('-v', '--verbose', 'verbosity', count=True, 
-                    default=DEFAULT_VERBOSITY,
-                    help='Set/increase verbosity level (cumulative). '
-                        f'Default level: {DEFAULT_VERBOSITY}.'),
+                     default=DEFAULT_VERBOSITY,
+                     help='Set/increase verbosity level (cumulative). '
+                          f'Default level: {DEFAULT_VERBOSITY}.'),
         click.option('--quiet', is_flag=True, default=False,
-                    help='Suppress output whenever possible. '
-                        'Has priority over -v/--verbose flags.'),
+                     help='Suppress output whenever possible. '
+                          'Has priority over -v/--verbose flags.'),
     ]
     return add_options(common_options)
+
+def add_dbm_minc_options():
+    dbm_minc_options = [
+        click.option('--share-dir', 'dpath_share', 
+                     callback=callback_path, envvar=ENV_VAR_DPATH_SHARE,
+                     help='Path to directory containing BEaST library and '
+                          f'anatomical models. Uses ${ENV_VAR_DPATH_SHARE} '
+                          'environment variable if not specified.'),
+        click.option('--template-dir', 'dpath_templates', callback=callback_path,
+                     help='Directory containing anatomical templates.'),
+        click.option('--template', 'template_prefix', default=DEFAULT_TEMPLATE,
+                     help='Prefix for anatomical model files. '
+                          f'Valid names: {list(DNAME_TEMPLATE_MAP.keys())}. '
+                          f'Default: {DEFAULT_TEMPLATE}.'),
+        click.option('--beast-lib-dir', 'dpath_beast_lib', callback=callback_path,
+                     help='Path to library directory for mincbeast.'),
+        click.option('--beast-conf', default=DEFAULT_BEAST_CONF,
+                     help='Name of configuration file for mincbeast. '
+                          f'Default: {DEFAULT_BEAST_CONF}.'),
+        click.option('--save-all/--save-subset', default=False,
+                     help='Save all intermediate files')
+    ]
+    return add_options(dbm_minc_options)
 
 def callback_path(ctx, param, value):
     if value is None:
@@ -63,6 +103,7 @@ def callback_path(ctx, param, value):
     return process_path(value)
 
 def with_helper(func):
+    @wraps(func)
     def _with_helper(
         fpath_log: Path = None, 
         verbosity: int = DEFAULT_VERBOSITY,
@@ -76,7 +117,7 @@ def with_helper(func):
 
         with_log = (fpath_log is not None)
         if with_log:
-            fpath_log.parent.mkdir(parents=True, exist_ok=overwrite)
+            fpath_log.parent.mkdir(parents=True, exist_ok=True)
 
         with fpath_log.open('w') if with_log else nullcontext() as file_log:
             helper = ScriptHelper(
@@ -89,23 +130,93 @@ def with_helper(func):
                 prefix_error=prefix_error,
             )
             try:
+                helper.timestamp()
+                
                 func(helper=helper, **kwargs)
+
+                if helper.callback is not None:
+                    helper.callback()
+
+                helper.done()
+
             except Exception:
                 helper.print_error_and_exit(traceback.format_exc())
 
+            finally:
+                helper.timestamp()
+
     return _with_helper
+
+def check_dbm_inputs(func):
+    @wraps(func)
+    def _check_dbm_inputs(
+        helper: ScriptHelper,
+        dpath_share: Union[None, Path] = None,
+        dpath_templates: Union[None, Path] = None,
+        template_prefix: str = DEFAULT_TEMPLATE,
+        dpath_beast_lib: str = DNAME_BEAST_LIB,
+        beast_conf: str = DEFAULT_BEAST_CONF,
+        save_all=False,
+        **kwargs,
+    ):
+
+        # make sure necessary paths are given
+        if dpath_share is None and (dpath_templates is None or dpath_beast_lib is None):
+                helper.print_error_and_exit('If --share-dir is not given, both '
+                                            '--template-dir and --beast-lib-dir '
+                                            'must be specified.')
+        if dpath_templates is None:
+            dpath_templates = dpath_share / DNAME_TEMPLATE_MAP[template_prefix]
+        if dpath_beast_lib is None:
+            dpath_beast_lib = dpath_share / DNAME_BEAST_LIB
+
+        # generate paths for template files and make sure they are valid
+        fpath_template = dpath_templates / f'{template_prefix}{EXT_MINC}'
+        fpath_template_mask = add_suffix(fpath_template, 
+                                        SUFFIX_TEMPLATE_MASK, sep=None)
+        if not fpath_template.exists():
+            helper.print_error_and_exit(f'Template file not found: {fpath_template}')
+        if not fpath_template_mask.exists():
+            helper.print_error_and_exit(
+                f'Template mask file not found: {fpath_template_mask}'
+            )
+
+        # make sure beast library and config file can be found
+        if not dpath_beast_lib.exists():
+            helper.print_error_and_exit(
+                f'BEaST library directory not found: {dpath_beast_lib}'
+            )
+        fpath_conf = dpath_beast_lib / beast_conf
+        if not fpath_conf.exists():
+            helper.print_error_and_exit(f'mincbeast config file not found: {fpath_conf}')
+
+        func(
+            helper=helper,
+            dpath_templates=dpath_templates,
+            template_prefix=template_prefix,
+            fpath_template=fpath_template,
+            fpath_template_mask=fpath_template_mask,
+            dpath_beast_lib=dpath_beast_lib,
+            fpath_conf=fpath_conf,
+            save_all=save_all,
+            **kwargs,
+        )
+
+    return _check_dbm_inputs
 
 class ScriptHelper():
 
     def __init__(
             self,
-            file_log=None,
+            file_log: Union[None, TextIO] = None,
             verbosity=2,
             quiet=False,
             dry_run=False,
             overwrite=False,
             prefix_run=PREFIX_RUN,
             prefix_error=PREFIX_ERROR,
+            done_message=DONE_MESSAGE,
+            callback=None
         ) -> None:
 
         # quiet overrides verbosity
@@ -119,6 +230,8 @@ class ScriptHelper():
         self.overwrite = overwrite
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
+        self.done_message = done_message
+        self.callback = callback
     
     def echo(self, message, prefix='', text_color=None, color_prefix_only=False):
         """
@@ -167,6 +280,7 @@ class ScriptHelper():
             stdout=None,
             stderr=None,
             silent=False,
+            force=False,
         ):
         """Run a shell command.
 
@@ -182,13 +296,15 @@ class ScriptHelper():
             Standard error for execute program, by default None
         silent : bool, optional
             Whether to execute the command without printing the command or the output
+        force : bool, optional
+            Execute the command even if self.dry_run is True
         """
         args = [str(arg) for arg in args if arg != '']
         args_str = ' '.join(args)
         if not silent and ((self.verbosity > 0) or self.dry_run):
             self.echo(f'{args_str}', prefix=PREFIX_RUN, text_color='yellow',
                       color_prefix_only=self.dry_run)
-        if not self.dry_run:
+        if force or (not self.dry_run):
             if stdout is None:
                 if silent or self.verbosity < 2:
                     # note: this doesn't silence everything because some MINC
@@ -209,17 +325,29 @@ class ScriptHelper():
 
     def timestamp(self):
         """Print the current time."""
-        self.run_command(['date'])
+        self.run_command(['date'], force=True)
 
-    def check_nonempty(self, dpath: Path):
-        try:
-            if not dpath.exists():
-                dpath.mkdir(parents=True)
-            if len(list(dpath.iterdir())) != 0 and not self.overwrite:
-                raise FileExistsError
-        except FileExistsError:
-            self.print_error_and_exit(
-                f'Output directory {dpath} exists. '
-                'Use --overwrite to overwrite'
-            )
+    def done(self):
+        self.echo('')
+        self.echo(self.done_message, text_color='green')
+
+    def mkdir(self, path: Union[str, Path], parents=True, exist_ok=None):
+        if exist_ok is None:
+            exist_ok = self.overwrite
+        if not self.dry_run:
+            Path(path).mkdir(parents=parents, exist_ok=exist_ok)
+
+    def check_dir(self, dpath: Path):
+        if dpath.exists() and (not self.overwrite):
+            if sum([p.is_file() for p in dpath.rglob('*')]) != 0:
+                self.print_error_and_exit(
+                    f'Directory {dpath} exists and is not empty. '
+                    'Use --overwrite to overwrite.'
+                )
         return dpath
+
+    def check_file(self, fpath: Path):
+        if fpath.exists() and not self.overwrite:
+            self.print_error_and_exit(
+                f'File {fpath} exists. Use --overwrite to overwrite.'
+            )

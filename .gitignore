@@ -1,6 +1,9 @@
 # macOS system files
 .DS_Store
 
+# Python
+__pycache__
+
 # from livingpark-utils
 .ppmi_config
 .cache
