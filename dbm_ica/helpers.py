@@ -8,13 +8,14 @@ import traceback
 from contextlib import nullcontext
 from functools import wraps
 from pathlib import Path
-from typing import Union
+from typing import Union, TextIO
 
 import click
 
 DEFAULT_VERBOSITY = 2
 PREFIX_RUN = '[RUN] '
 PREFIX_ERROR = '[ERROR] '
+DONE_MESSAGE = '[DONE]'
 
 EXT_NIFTI = '.nii'
 EXT_GZIP = '.gz'
@@ -58,31 +59,30 @@ def add_options(options):
 def add_common_options():
     common_options = [
         click.option('--logfile', 'fpath_log', callback=callback_path,
-                help='Path to log file'),
-        click.option('--rename-log/--no-rename-log', default=False),
+                     help='Path to log file'),
         click.option('--overwrite/--no-overwrite', default=False,
-                help='Overwrite existing result files.'),
+                     help='Overwrite existing result files.'),
         click.option('--dry-run/--no-dry-run', default=False,
-                    help='Print shell commands without executing them.'),
+                     help='Print shell commands without executing them.'),
         click.option('-v', '--verbose', 'verbosity', count=True, 
-                    default=DEFAULT_VERBOSITY,
-                    help='Set/increase verbosity level (cumulative). '
-                        f'Default level: {DEFAULT_VERBOSITY}.'),
+                     default=DEFAULT_VERBOSITY,
+                     help='Set/increase verbosity level (cumulative). '
+                          f'Default level: {DEFAULT_VERBOSITY}.'),
         click.option('--quiet', is_flag=True, default=False,
-                    help='Suppress output whenever possible. '
-                        'Has priority over -v/--verbose flags.'),
+                     help='Suppress output whenever possible. '
+                          'Has priority over -v/--verbose flags.'),
     ]
     return add_options(common_options)
 
 def add_dbm_minc_options():
     dbm_minc_options = [
         click.option('--share-dir', 'dpath_share', 
-              callback=callback_path, envvar=ENV_VAR_DPATH_SHARE,
-              help='Path to directory containing BEaST library and '
-                   f'anatomical models. Uses ${ENV_VAR_DPATH_SHARE} '
-                   'environment variable if not specified.'),
+                     callback=callback_path, envvar=ENV_VAR_DPATH_SHARE,
+                     help='Path to directory containing BEaST library and '
+                          f'anatomical models. Uses ${ENV_VAR_DPATH_SHARE} '
+                          'environment variable if not specified.'),
         click.option('--template-dir', 'dpath_templates', callback=callback_path,
-                    help='Directory containing anatomical templates.'),
+                     help='Directory containing anatomical templates.'),
         click.option('--template', 'template_prefix', default=DEFAULT_TEMPLATE,
                      help='Prefix for anatomical model files. '
                           f'Valid names: {list(DNAME_TEMPLATE_MAP.keys())}. '
@@ -106,7 +106,6 @@ def with_helper(func):
     @wraps(func)
     def _with_helper(
         fpath_log: Path = None, 
-        rename_log: bool = False,
         verbosity: int = DEFAULT_VERBOSITY,
         quiet: bool = False,
         dry_run: bool = False,
@@ -132,20 +131,13 @@ def with_helper(func):
             )
             try:
                 helper.timestamp()
+                
                 func(helper=helper, **kwargs)
 
-                if rename_log:
-                    if helper.nifti_prefix is None:
-                        helper.print_error_and_exit(
-                            "'nifti_prefix' attribute must be set if rename_log is True"
-                        )
-                    
-                    fpath_source = Path(file_log.name).resolve()
-                    fpath_destination = fpath_source.parent / f'{helper.nifti_prefix}.log'
-                    helper.run_command(
-                        ['mv', '-v', fpath_source, fpath_destination],
-                        force=True,
-                    )
+                if helper.callback is not None:
+                    helper.callback()
+
+                helper.done()
 
             except Exception:
                 helper.print_error_and_exit(traceback.format_exc())
@@ -216,13 +208,15 @@ class ScriptHelper():
 
     def __init__(
             self,
-            file_log=None,
+            file_log: Union[None, TextIO] = None,
             verbosity=2,
             quiet=False,
             dry_run=False,
             overwrite=False,
             prefix_run=PREFIX_RUN,
             prefix_error=PREFIX_ERROR,
+            done_message=DONE_MESSAGE,
+            callback=None
         ) -> None:
 
         # quiet overrides verbosity
@@ -236,8 +230,8 @@ class ScriptHelper():
         self.overwrite = overwrite
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
-
-        self.nifti_prefix = None
+        self.done_message = done_message
+        self.callback = callback
     
     def echo(self, message, prefix='', text_color=None, color_prefix_only=False):
         """
@@ -303,7 +297,7 @@ class ScriptHelper():
         silent : bool, optional
             Whether to execute the command without printing the command or the output
         force : bool, optional
-            Force running the command, ignore self.dry_run
+            Execute the command even if self.dry_run is True
         """
         args = [str(arg) for arg in args if arg != '']
         args_str = ' '.join(args)
@@ -332,6 +326,10 @@ class ScriptHelper():
     def timestamp(self):
         """Print the current time."""
         self.run_command(['date'], force=True)
+
+    def done(self):
+        self.echo('')
+        self.echo(self.done_message, text_color='green')
 
     def mkdir(self, path: Union[str, Path], parents=True, exist_ok=None):
         if exist_ok is None:

@@ -13,8 +13,6 @@ from bids.layout import parse_file_entities
 # and pass/fail for each step (conversion, denoise, linear, beast, nonlinear, DBM, etc.)
 # use pandas?
 
-# TODO move logs directory outside of output directory
-
 from helpers import (
     add_common_options, 
     add_dbm_minc_options,
@@ -33,6 +31,7 @@ from helpers import (
     SUFFIX_T1,
 )
 
+# output file naming for DBM pipeline
 SUFFIX_DENOISED = 'denoised'
 SUFFIX_NORM = 'norm_lr'
 SUFFIX_MASK = '_mask' # binary mask
@@ -41,10 +40,17 @@ SUFFIX_NONLINEAR = 'nlr'
 SUFFIX_DBM = 'dbm'
 SUFFIX_RESAMPLED = 'resampled'
 
-MIN_I_FILE = 1
+EXT_LOG = '.log'
+PREFIX_PIPELINE = 'dbm_minc'
+
+# output subdirectories
+DNAME_DBM = 'dbm'
 DNAME_LOGS = 'logs'
 
-# job settings
+# for multi-file command
+MIN_I_FILE = 1
+
+# job settings for multi-file command
 JOB_TYPE_SLURM = 'slurm'
 JOB_TYPE_SGE = 'sge'
 VALID_JOB_TYPES = [JOB_TYPE_SLURM, JOB_TYPE_SGE]
@@ -99,13 +105,21 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
 @click.argument('dpath_bids', callback=callback_path)
 @click.argument('fpath_bids_list', callback=callback_path)
 @click.argument('dpath_out', default='.', callback=callback_path)
-@click.option('-i', '--i-file', 'i_file_single', type=click.IntRange(min=MIN_I_FILE))
-@click.option('-r', '--range', 'i_file_range', type=click.IntRange(min=MIN_I_FILE), nargs=2)
-@click.option('-c', '--container', 'fpath_container', callback=callback_path)
-@click.option('-j', '--job', 'job_type', type=click.Choice(VALID_JOB_TYPES, case_sensitive=False))
+@click.option('-i', '--i-file', 'i_file_single', 
+              type=click.IntRange(min=MIN_I_FILE))
+@click.option('-r', '--range', 'i_file_range', 
+              type=click.IntRange(min=MIN_I_FILE), nargs=2)
+@click.option('-j', '--job', 'job_type', envvar='JOB_TYPE',
+              type=click.Choice(VALID_JOB_TYPES,case_sensitive=False))
+@click.option('--job-resource', envvar='JOB_RESOURCE')
+@click.option('--job-log', 'fpath_log_job', callback=callback_path,
+              default=f'{PREFIX_PIPELINE}{EXT_LOG}', 
+              envvar='FPATH_DBM_JOB_LOG')
+@click.option('-c', '--container', 'fpath_container', callback=callback_path,
+              envvar='FPATH_DBM_CONTAINER')
 @click.option('-m', '--memory', 'job_memory', default=DEFAULT_JOB_MEMORY)
 @click.option('-t', '--time', 'job_time', default=DEFAULT_JOB_TIME)
-@click.option('--job-resource', envvar='JOB_RESOURCE')
+@click.option('--rename-log/--no-rename-log', default=True)
 @add_dbm_minc_options()
 @add_common_options()
 @with_helper
@@ -116,19 +130,25 @@ def bids_run(
     helper: ScriptHelper,
     i_file_single: Union[int, None],
     i_file_range: Union[tuple, None],
-    fpath_container: Union[Path, None],
     job_type: str,
     job_resource: str,
+    fpath_log_job: Path,
+    fpath_container: Union[Path, None],
     job_memory: str,
     job_time: str,
+    rename_log: bool,
     **kwargs,
     ):
 
+    # make output directory now
+    # need to mount it when running containing
     helper.mkdir(dpath_out, exist_ok=True)
 
+    # convert to range
     if i_file_single is not None:
         i_file_range = (i_file_single, i_file_single)
 
+    # get min/max of range
     if i_file_range is not None:
         i_file_min = min(i_file_range)
         i_file_max = max(i_file_range)
@@ -150,25 +170,28 @@ def bids_run(
 
         # make sure container is specified and exists
         if fpath_container is None:
-            helper.print_error_and_exit('--container must be specified when --job is given')
+            helper.print_error_and_exit(
+                '--container must be specified when --job is given',
+            )
         if not fpath_container.exists():
-            helper.print_error_and_exit(f'Container not found: {fpath_container}')
+            helper.print_error_and_exit(
+                f'Container not found: {fpath_container}'
+            )
 
         # get path to this file
         fpath_script = Path(__file__).resolve()
         bindpath_script = Path(BINDPATH_SCRIPTS) / fpath_script.name
         dpath_scripts = fpath_script.parent
 
-        script_command = [
+        script_command_args = [
             f'{bindpath_script} bids-run',
             f'{BINDPATH_BIDS_DATA} {BINDPATH_BIDS_LIST} {BINDPATH_OUT}',
             f'-i ${VARNAME_I_FILE}',
-            f'--logfile {BINDPATH_OUT}/{DNAME_LOGS}/dbm_minc-${{{VARNAME_I_FILE}}}.log',
-            '--rename-log',
+            '--rename-log' if rename_log else '',
             '--overwrite' if helper.overwrite else '',
         ]
 
-        singularity_command = [
+        singularity_command_args = [
             'singularity', 'run',
             f'--bind {dpath_scripts}:{BINDPATH_SCRIPTS}:ro',
             f'--bind {dpath_bids}:{BINDPATH_BIDS_DATA}:ro',
@@ -176,7 +199,7 @@ def bids_run(
             f'--bind {dpath_out}:{BINDPATH_OUT}',
             f'--bind /data/origami/livingpark/zeighami-etal-2019/dbm_ica/ignore/tmp_home:/home/bic/mwang', # TODO remove
             f'{fpath_container}',
-            ' '.join(script_command),
+            ' '.join(script_command_args),
         ]
     
         # temporary file for job submission script
@@ -187,31 +210,55 @@ def bids_run(
             if job_type == JOB_TYPE_SGE:
 
                 varname_array_job_id = 'SGE_TASK_ID'
+                varname_job_id = 'JOB_ID'
 
                 job_command_args = [
                     'qsub',
+                    '-cwd',
+                    '-N', PREFIX_PIPELINE,
                     '-q', job_resource,
                     '-t', f'{i_file_min}-{i_file_max}:1',
                     '-l', f'h_vmem={job_memory}',
                     '-l', f'h_rt={job_time}',
+                    '-j', 'y',
+                    '-o', fpath_log_job,
                     fpath_submission_tmp,
                 ]
 
             else:
-                raise NotImplementedError(f'Not implemented for job type {job_type} yet')
+                raise NotImplementedError(
+                    f'Not implemented for job type {job_type} yet'
+                )
 
             # job submission script
+            singularity_command = ' '.join(singularity_command_args)
+            varname_command = 'COMMAND'
             submission_file_lines = [
                 '#!/bin/bash',
+                (
+                    'echo ===================='
+                    f' START JOB: ${{{varname_job_id}}} ===================='
+                ),
+                'echo `date`',
+                f'echo "Memory: {job_memory}"',
+                f'echo "Time: {job_time}"',
                 f'{VARNAME_I_FILE}=${varname_array_job_id}',
-                ' '.join(singularity_command),
+                f'{varname_command}="{singularity_command}"',
+                'echo "--------------------"',
+                f'echo ${{{varname_command}}}',
+                'echo "--------------------"',
+                f'eval ${{{varname_command}}}',
+                (
+                    'echo ===================='
+                    f' END JOB: ${{{varname_job_id}}} ===================='
+                ),
             ]
 
             # write to file
             for submission_file_line in submission_file_lines:
                 file_tmp.write(f'{submission_file_line}\n')
-            file_tmp.flush()
-            fpath_submission_tmp.chmod(0o744)
+            file_tmp.flush() # write right now
+            fpath_submission_tmp.chmod(0o744) # make executable
 
             # print file
             helper.run_command(['cat', fpath_submission_tmp])
@@ -222,7 +269,10 @@ def bids_run(
     # otherwise run the pipeline directly
     else:
 
-        layout_out = BIDSLayout(dpath_out, validate=False)
+        dpath_out_dbm = dpath_out / DNAME_DBM
+        dpath_log = dpath_out / DNAME_LOGS
+        helper.mkdir(dpath_out_dbm, exist_ok=True)
+        layout_out = BIDSLayout(dpath_out_dbm, validate=False)
 
         with fpath_bids_list.open('r') as file_bids_list:
 
@@ -246,10 +296,19 @@ def bids_run(
                 bids_entities = parse_file_entities(fpath_t1)
                 dpath_out_bids = Path(layout_out.build_path(bids_entities)).parent
 
+                fpath_log = dpath_log / f'{PREFIX_PIPELINE}-{i_file}{EXT_LOG}'
+                helper.echo(f'Running pipeline on T1 file {fpath_t1}')
+                helper.echo(f'\tLog: {fpath_log}')
+
                 _run_dbm_minc(
                     fpath_nifti=fpath_t1,
                     dpath_out=dpath_out_bids,
-                    helper=helper,
+                    fpath_log=fpath_log, # new log file
+                    rename_log=rename_log,
+                    verbosity=helper.verbosity,
+                    quiet=helper.quiet,
+                    dry_run=helper.dry_run,
+                    overwrite=helper.overwrite,
                     **kwargs,
                 )
 
@@ -258,16 +317,16 @@ def bids_run(
 @click.argument('dpath_out', type=str, default='.', callback=callback_path)
 @add_dbm_minc_options()
 @add_common_options()
-@with_helper
 def file(**kwargs):
     _run_dbm_minc(**kwargs)
 
+@with_helper
 @check_dbm_inputs
 def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path, 
                   dpath_templates: Path, template_prefix: str, 
                   fpath_template: Path, fpath_template_mask: Path,
                   dpath_beast_lib: Path, fpath_conf: Path, 
-                  save_all, **kwargs):
+                  save_all: bool, rename_log: bool, **kwargs):
 
     def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
         fpath_orig = Path(fpath_orig)
@@ -284,6 +343,18 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             fpath_out,
         ])
         return fpath_out
+
+    def rename_log_callback(helper: ScriptHelper, fpath_new, same_parent=True):
+        fpath_old = Path(helper.file_log.name)
+        fpath_new = Path(fpath_new)
+        if same_parent:
+            fpath_new = fpath_old.parent / fpath_new
+        def _rename_log_callback():
+            helper.run_command(
+                ['mv', '-v', fpath_old, fpath_new], 
+                force=True,
+            )
+        return _rename_log_callback
 
     # make sure input file exists and has valid extension
     if not fpath_nifti.exists():
@@ -309,8 +380,13 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             fpath_raw_nii = dpath_tmp / fpath_nifti.name # keep last suffix
             helper.run_command(['ln', '-s', fpath_nifti, fpath_raw_nii])
 
-        # for renaming the logfile, if needed
-        helper.nifti_prefix = fpath_raw_nii.stem
+        # for renaming the logfile based on nifti file name
+        if rename_log:
+            helper.callback = rename_log_callback(
+                helper, 
+                f'{fpath_raw_nii.stem}{EXT_LOG}',
+                same_parent=True,
+            )
 
         # skip if output subdirectory already exists and is not empty
         helper.check_dir(dpath_out)
