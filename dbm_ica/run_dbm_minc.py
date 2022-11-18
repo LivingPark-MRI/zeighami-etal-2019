@@ -197,7 +197,6 @@ def bids_run(
             f'--bind {dpath_bids}:{BINDPATH_BIDS_DATA}:ro',
             f'--bind {fpath_bids_list}:{BINDPATH_BIDS_LIST}:ro',
             f'--bind {dpath_out}:{BINDPATH_OUT}',
-            f'--bind /data/origami/livingpark/zeighami-etal-2019/dbm_ica/ignore/tmp_home:/home/bic/mwang', # TODO remove
             f'{fpath_container}',
             ' '.join(script_command_args),
         ]
