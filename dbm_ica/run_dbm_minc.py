@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory, NamedTemporaryFile
 from typing import Union
 
 import click
+import pandas as pd
 
 from bids import BIDSLayout
 from bids.layout import parse_file_entities
@@ -24,6 +25,7 @@ from helpers import (
     EXT_NIFTI,
     EXT_TRANSFORM,
     SUFFIX_T1,
+    SEP_SUFFIX,
 )
 
 # output file naming for DBM pipeline
@@ -41,6 +43,21 @@ PREFIX_PIPELINE = 'dbm_minc'
 # subdirectory/file names
 DNAME_OUTPUT = 'output'
 DNAME_LOGS = 'logs'
+FNAME_STATUS = 'proc_status.csv'
+STATUS_PASS = 'PASS'
+STATUS_FAIL = 'FAIL'
+
+# TODO parse steps/suffixes from file (?)
+FINAL_DBM_COMPONENTS = [
+    SUFFIX_DENOISED,
+    SUFFIX_NORM,
+    SUFFIX_MASKED,
+    SUFFIX_NONLINEAR,
+    SUFFIX_DBM,
+    SUFFIX_RESAMPLED,
+    SUFFIX_MASKED,
+]
+FINAL_DBM_SUFFIX = f'{SEP_SUFFIX}{SEP_SUFFIX.join(FINAL_DBM_COMPONENTS)}{EXT_NIFTI}'
 
 # for multi-file command
 MIN_I_FILE = 1
@@ -308,6 +325,66 @@ def bids_run(
                     overwrite=helper.overwrite,
                     **kwargs,
                 )
+
+@cli.command()
+@click.argument('fpath_bids_list', callback=callback_path)
+@click.argument('dpath_out', callback=callback_path)
+@click.option('-s', '--step', 'step_suffix_pairs', nargs=2, default=[('dbm', FINAL_DBM_SUFFIX)], multiple=True)
+@click.option('-o', '--file-out', 'fname_out', default=FNAME_STATUS)
+@click.option('-e', '--extension-t1', 'ext_t1', default=f'{EXT_NIFTI}{EXT_GZIP}')
+@add_common_options()
+@with_helper
+def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path, step_suffix_pairs, fname_out, ext_t1):
+
+    def get_fpath_t1(path_result, dpath_bids_root):
+        path_result = Path(path_result)
+        dpath_parent_rel = path_result.parent.relative_to(dpath_bids_root)
+        prefix = path_result.name.split('.')[0]
+        fname_raw = f'{prefix}{ext_t1}'
+        return str(dpath_parent_rel / fname_raw)
+
+    col_fpath_t1 = 'fpath_t1'
+
+    dpath_bids = dpath_out / DNAME_OUTPUT
+    fpath_out = (dpath_out / fname_out).resolve()
+
+    helper.check_file(fpath_out)
+
+    layout = BIDSLayout(dpath_bids, validate=False)
+    df_layout = layout.to_df()
+    df_layout[col_fpath_t1] = df_layout['path'].apply(
+        lambda path: get_fpath_t1(path, dpath_bids)
+    )
+
+    if helper.verbose():
+        helper.echo('\nChecking processing status for steps:')
+        for step, suffix in step_suffix_pairs:
+            helper.echo(f'{step}:\t{suffix}')
+
+    t1_proc_status_all = []
+    df_t1s = pd.read_csv(fpath_bids_list, header=None, names=[col_fpath_t1])
+    for fpath_t1 in df_t1s[col_fpath_t1]:
+
+        t1_proc_status = layout.parse_file_entities(fpath_t1)
+        t1_proc_status['fpath'] = fpath_t1
+
+        df_results = df_layout.loc[df_layout[col_fpath_t1] == fpath_t1]
+        extensions = df_results['extension'].tolist()
+
+        for step, suffix in step_suffix_pairs:
+            t1_proc_status[step] = (
+                STATUS_PASS
+                if (suffix in extensions)
+                else STATUS_FAIL
+            )
+
+        t1_proc_status_all.append(t1_proc_status)
+
+    df_proc_status = pd.DataFrame(t1_proc_status_all)
+    df_proc_status.to_csv(fpath_out, index=False, header=True)
+    
+    if helper.verbose():
+        helper.echo(f'\nWrote file to {fpath_out}', text_color='blue')
 
 @cli.command()
 @click.argument('fpath_nifti', type=str, callback=callback_path)

@@ -22,6 +22,7 @@ EXT_GZIP = '.gz'
 EXT_MINC = '.mnc'
 EXT_TRANSFORM = '.xfm'
 SUFFIX_T1 = 'T1w'
+SEP_SUFFIX = '.'
 
 SUFFIX_TEMPLATE_MASK = '_mask' # MNI template naming convention
 ENV_VAR_DPATH_SHARE = 'MNI_DATAPATH'
@@ -36,7 +37,7 @@ DNAME_TEMPLATE_MAP = {
 def add_suffix(
     path: Union[Path, str], 
     suffix: str, 
-    sep: Union[str, None] = '.',
+    sep: Union[str, None] = SEP_SUFFIX,
 ) -> Path:
     if sep is not None:
         if suffix.startswith(sep):
@@ -232,6 +233,9 @@ class ScriptHelper():
         self.prefix_error = prefix_error
         self.done_message = done_message
         self.callback = callback
+
+    def verbose(self, threshold=0):
+        return self.verbosity > threshold
     
     def echo(self, message, prefix='', text_color=None, color_prefix_only=False):
         """
