@@ -38,6 +38,9 @@ if [ ! -f "$ND_ENTRYPOINT" ]; then
 fi
 chmod -R 777 /neurodocker && chmod a+s /neurodocker
 
+# add minc config to startup script
+sed -i '$isource /opt/minc/1.9.16/minc-toolkit-config.sh' $ND_ENTRYPOINT
+
 apt-get update -qq
 apt-get install -y -q --no-install-recommends \
     bc \

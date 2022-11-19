@@ -8,11 +8,6 @@ import click
 from bids import BIDSLayout
 from bids.layout import parse_file_entities
 
-# TODO write to proc_status.csv
-# with columns ID/session/modality/suffix
-# and pass/fail for each step (conversion, denoise, linear, beast, nonlinear, DBM, etc.)
-# use pandas?
-
 from helpers import (
     add_common_options, 
     add_dbm_minc_options,
@@ -43,8 +38,8 @@ SUFFIX_RESAMPLED = 'resampled'
 EXT_LOG = '.log'
 PREFIX_PIPELINE = 'dbm_minc'
 
-# output subdirectories
-DNAME_DBM = 'dbm'
+# subdirectory/file names
+DNAME_OUTPUT = 'output'
 DNAME_LOGS = 'logs'
 
 # for multi-file command
@@ -165,7 +160,7 @@ def bids_run(
         # make sure job account/queue is specified
         if job_resource is None:
             helper.print_error_and_exit(
-                '--job-resource must be specified when --job is given.',
+                '--job-resource must be specified when --job is given',
             )
 
         # make sure container is specified and exists
@@ -236,7 +231,8 @@ def bids_run(
                 '#!/bin/bash',
                 (
                     'echo ===================='
-                    f' START JOB: ${{{varname_job_id}}} ===================='
+                    f' START JOB: ${{{varname_job_id}}} '
+                    '===================='
                 ),
                 'echo `date`',
                 f'echo "Memory: {job_memory}"',
@@ -247,9 +243,11 @@ def bids_run(
                 f'echo ${{{varname_command}}}',
                 'echo "--------------------"',
                 f'eval ${{{varname_command}}}',
+                'echo `date`',
                 (
                     'echo ===================='
-                    f' END JOB: ${{{varname_job_id}}} ===================='
+                    f' END JOB: ${{{varname_job_id}}} '
+                    '===================='
                 ),
             ]
 
@@ -268,10 +266,10 @@ def bids_run(
     # otherwise run the pipeline directly
     else:
 
-        dpath_out_dbm = dpath_out / DNAME_DBM
-        dpath_log = dpath_out / DNAME_LOGS
-        helper.mkdir(dpath_out_dbm, exist_ok=True)
-        layout_out = BIDSLayout(dpath_out_dbm, validate=False)
+        dpath_results = dpath_out / DNAME_OUTPUT
+        dpath_logs = dpath_out / DNAME_LOGS
+        helper.mkdir(dpath_results, exist_ok=True)
+        layout_results = BIDSLayout(dpath_results, validate=False)
 
         with fpath_bids_list.open('r') as file_bids_list:
 
@@ -293,9 +291,9 @@ def bids_run(
 
                 # generate path to BIDS-like output directory
                 bids_entities = parse_file_entities(fpath_t1)
-                dpath_out_bids = Path(layout_out.build_path(bids_entities)).parent
+                dpath_out_bids = Path(layout_results.build_path(bids_entities)).parent
 
-                fpath_log = dpath_log / f'{PREFIX_PIPELINE}-{i_file}{EXT_LOG}'
+                fpath_log = dpath_logs / f'{PREFIX_PIPELINE}-{i_file}{EXT_LOG}'
                 helper.echo(f'Running pipeline on T1 file {fpath_t1}')
                 helper.echo(f'\tLog: {fpath_log}')
 
