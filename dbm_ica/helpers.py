@@ -95,7 +95,7 @@ def add_dbm_minc_options():
                           f'Default: {DEFAULT_BEAST_CONF}.'),
         click.option('--save-all/--save-subset', default=False,
                      help='Save all intermediate files.'),
-        click.option('--compress-nii/no-compress-nii', default=True,
+        click.option('--compress-nii/--no-compress-nii', default=True,
                      help='Compress result files.'),
     ]
     return add_options(dbm_minc_options)
