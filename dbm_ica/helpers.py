@@ -47,7 +47,7 @@ def add_suffix(
     return path.parent / f'{path.stem}{sep}{suffix}{path.suffix}'
 
 def process_path(path: str) -> Path:
-    return Path(path).expanduser().absolute()
+    return Path(path).expanduser().resolve()
 
 def add_options(options):
     def _add_options(func):
