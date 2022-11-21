@@ -8,7 +8,7 @@ FNAME_DBM_LOG = 'dbm_minc.log'
 FNAME_CONTAINER = 'nd-minc_1_9_16-fsl_5_0_11-click_pandas_pybids.sif'
 FNAME_BIDS_LIST = 'bids_list.txt'
 
-DNAME_OUT = 'processed'
+DNAME_OUT = 'out'
 DNAME_OUT_DBM = 'dbm'
 DNAME_OUT_ICA = 'ica'
 
