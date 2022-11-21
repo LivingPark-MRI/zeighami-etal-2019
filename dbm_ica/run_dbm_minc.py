@@ -50,18 +50,6 @@ STATUS_PASS = 'PASS'
 STATUS_FAIL = 'FAIL'
 COL_PROC_PATH = 'fpath_input'
 
-# TODO parse steps/suffixes from file (?)
-FINAL_DBM_COMPONENTS = [
-    SUFFIX_DENOISED,
-    SUFFIX_NORM,
-    SUFFIX_MASKED,
-    SUFFIX_NONLINEAR,
-    SUFFIX_DBM,
-    SUFFIX_RESAMPLED,
-    SUFFIX_MASKED,
-]
-FINAL_DBM_SUFFIX = f'{SEP_SUFFIX}{SEP_SUFFIX.join(FINAL_DBM_COMPONENTS)}{EXT_NIFTI}'
-
 # for multi-file command
 MIN_I_FILE = 1
 
@@ -332,12 +320,13 @@ def bids_run(
 @cli.command()
 @click.argument('fpath_bids_list', callback=callback_path)
 @click.argument('dpath_out', callback=callback_path)
-@click.option('-s', '--step', 'step_suffix_pairs', nargs=2, default=[('dbm', FINAL_DBM_SUFFIX)], multiple=True)
+@click.option('-s', '--step', 'step_suffix_pairs', nargs=2, multiple=True, required=True)
 @click.option('-o', '--file-out', 'fname_out', default=FNAME_STATUS)
 @click.option('-e', '--extension-t1', 'ext_t1', default=f'{EXT_NIFTI}{EXT_GZIP}')
 @add_common_options()
 @with_helper
-def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path, step_suffix_pairs, fname_out, ext_t1):
+def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path, 
+                 step_suffix_pairs, fname_out, ext_t1):
 
     def get_fpath_t1(path_result, dpath_bids_root):
         path_result = Path(path_result)
