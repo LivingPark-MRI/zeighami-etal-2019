@@ -153,7 +153,7 @@ def with_helper(func):
             finally:
 
                 if helper.callback_always is not None:
-                    helper.callback_success()
+                    helper.callback_always()
 
                 helper.print_separation()
                 helper.timestamp()
