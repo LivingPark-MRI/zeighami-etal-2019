@@ -15,20 +15,23 @@ DNAME_OUT_ICA = 'ica'
 @click.command()
 @click.argument('dpath-root', default='.', callback=callback_path)
 @click.argument('dpath-bids', default='bids', callback=callback_path)
-@click.option('-j', '--job-resource')
+@click.option('-j', '--job', 'job_type_and_resource', nargs=2, 
+              help='Job submission system and account/queue')
 @click.option('-f', '--fname-dotenv', default='.env')
 @add_common_options()
 @with_helper
 def create_default_dotenv(
     dpath_root: Path, 
     dpath_bids: Path, 
-    job_resource: str,
+    job_type_and_resource: tuple,
     fname_dotenv: str, 
     helper: ScriptHelper,
     ):
 
-    if job_resource is None:
-        job_resource = ''
+    if job_type_and_resource is None:
+        job_type_and_resource = ('', '')
+    
+    job_type, job_resource = job_type_and_resource
     
     if helper.verbose:
         helper.print_info(f'Generating default dotenv file with root directory: {dpath_root}')
@@ -37,6 +40,7 @@ def create_default_dotenv(
     constants = {
         'DPATH_ROOT': dpath_root,
         'DPATH_BIDS': dpath_bids,
+        'JOB_TYPE': job_type,
         'JOB_RESOURCE': job_resource,
     }
 
