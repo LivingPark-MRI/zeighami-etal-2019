@@ -40,12 +40,15 @@ SUFFIX_RESAMPLED = 'resampled'
 EXT_LOG = '.log'
 PREFIX_PIPELINE = 'dbm_minc'
 
-# subdirectory/file names
+# subdirectory names
 DNAME_OUTPUT = 'output'
 DNAME_LOGS = 'logs'
+
+# for check_status
 FNAME_STATUS = 'proc_status.csv'
 STATUS_PASS = 'PASS'
 STATUS_FAIL = 'FAIL'
+COL_PROC_PATH = 'fpath_input'
 
 # TODO parse steps/suffixes from file (?)
 FINAL_DBM_COMPONENTS = [
@@ -366,7 +369,7 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path, s
     for fpath_t1 in df_t1s[col_fpath_t1]:
 
         t1_proc_status = layout.parse_file_entities(fpath_t1)
-        t1_proc_status['fpath'] = fpath_t1
+        t1_proc_status[COL_PROC_PATH] = fpath_t1
 
         df_results = df_layout.loc[df_layout[col_fpath_t1] == fpath_t1]
         extensions = df_results['extension'].tolist()
@@ -380,9 +383,22 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path, s
 
         t1_proc_status_all.append(t1_proc_status)
 
+    # make df
     df_proc_status = pd.DataFrame(t1_proc_status_all)
+
+    # reorder columns because entities are not the same for all T1 files
+    # sometimes there is an additional 'acquisition' field
+    # which gets appended to the df, but we want all entities to be before
+    # the other columns
+    cols_proc = df_proc_status.columns.to_list()
+    last_cols = [COL_PROC_PATH] + [step for step, _ in step_suffix_pairs]
+    for col in last_cols:
+        cols_proc.remove(col)
+        cols_proc.append(col)
+    df_proc_status = df_proc_status[cols_proc]
+
+    # write file
     df_proc_status.to_csv(fpath_out, index=False, header=True)
-    
     if helper.verbose():
         helper.echo(f'\nWrote file to {fpath_out}', text_color='blue')
 
