@@ -31,7 +31,7 @@ def create_default_dotenv(
         job_resource = ''
     
     if helper.verbose:
-        helper.echo(f'Generating default dotenv file with root directory: {dpath_root}')
+        helper.print_info(f'Generating default dotenv file with root directory: {dpath_root}')
 
     # project root directory
     constants = {
@@ -47,9 +47,9 @@ def create_default_dotenv(
     constants['FPATH_DBM_JOB_LOG'] = constants['DPATH_MRI_SCRIPTS'] / FNAME_DBM_LOG
 
     # MRI output
-    constants['DPATH_OUT'] = constants['DPATH_MRI_SCRIPTS'] / DNAME_OUT
+    constants['DPATH_OUT'] = constants['DPATH_ROOT'] / DNAME_OUT
     constants['DPATH_OUT_DBM'] = constants['DPATH_OUT'] / DNAME_OUT_DBM
-    constants['FNAME_BIDS_LIST'] = constants['DPATH_OUT_DBM'] / FNAME_BIDS_LIST
+    constants['FPATH_BIDS_LIST'] = constants['DPATH_OUT_DBM'] / FNAME_BIDS_LIST
     constants['DPATH_OUT_ICA'] = constants['DPATH_OUT'] / DNAME_OUT_ICA
 
     if not Path(constants['DPATH_MRI_SCRIPTS']).exists():
@@ -66,8 +66,7 @@ def create_default_dotenv(
             line = f'{key}={value}\n'
             file_dotenv.write(line)
         
-    if helper.verbose:
-        helper.echo(f'Variables written to {fpath_out}', text_color='blue')
+    helper.print_outcome(f'Variables written to {fpath_out}', text_color='blue')
 
 if __name__ == '__main__':
     create_default_dotenv()

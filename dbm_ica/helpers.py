@@ -267,6 +267,13 @@ class ScriptHelper():
     def print_separation(self, symbol='-', length=20):
         self.echo(symbol * length)
 
+    def print_info(self, message='', text_color=None):
+        if self.verbose:
+            self.echo(message=message, text_color=text_color)
+
+    def print_outcome(self, message='', text_color='blue'):
+        self.echo(message=message, text_color=text_color)
+
     def print_error_and_exit(self, message, text_color='red', exit_code=1):
         """Print a message and exit the program.
 
