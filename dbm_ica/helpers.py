@@ -233,6 +233,10 @@ class ScriptHelper():
         self.done_message = done_message
         self.callback = callback
     
+    @property
+    def verbose(self):
+        return self.verbosity > 0
+
     def echo(self, message, prefix='', text_color=None, color_prefix_only=False):
         """
         Print a message and newline to stdout or a file, similar to click.echo() 
