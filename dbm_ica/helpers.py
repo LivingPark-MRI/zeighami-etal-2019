@@ -15,7 +15,7 @@ import click
 DEFAULT_VERBOSITY = 2
 PREFIX_RUN = '[RUN] '
 PREFIX_ERROR = '[ERROR] '
-DONE_MESSAGE = '[DONE]'
+DONE_MESSAGE = '[SUCCESS]'
 
 EXT_NIFTI = '.nii'
 EXT_GZIP = '.gz'
@@ -131,6 +131,7 @@ def with_helper(func):
             )
             try:
                 helper.timestamp()
+                helper.print_separation()
                 
                 func(helper=helper, **kwargs)
 
@@ -143,6 +144,7 @@ def with_helper(func):
                 helper.print_error_and_exit(traceback.format_exc())
 
             finally:
+                helper.print_separation()
                 helper.timestamp()
 
     return _with_helper
@@ -237,7 +239,7 @@ class ScriptHelper():
     def verbose(self):
         return self.verbosity > 0
 
-    def echo(self, message, prefix='', text_color=None, color_prefix_only=False):
+    def echo(self, message='', prefix='', text_color=None, color_prefix_only=False):
         """
         Print a message and newline to stdout or a file, similar to click.echo() 
         but with some color processing.
@@ -261,6 +263,9 @@ class ScriptHelper():
             text = click.style(f'{prefix}{message}', fg=text_color)
 
         click.echo(text, color=True, file=self.file_log)
+
+    def print_separation(self, symbol='-', length=20):
+        self.echo(symbol * length)
 
     def print_error_and_exit(self, message, text_color='red', exit_code=1):
         """Print a message and exit the program.
@@ -323,7 +328,7 @@ class ScriptHelper():
                                stdout=stdout, stderr=stderr)
             except subprocess.CalledProcessError as ex:
                 self.print_error_and_exit(
-                    f'Command {args_str} returned {ex.returncode}',
+                    f'\nCommand {args_str} returned {ex.returncode}',
                     exit_code=ex.returncode,
                 )
 
@@ -332,7 +337,6 @@ class ScriptHelper():
         self.run_command(['date'], force=True)
 
     def done(self):
-        self.echo('')
         self.echo(self.done_message, text_color='green')
 
     def mkdir(self, path: Union[str, Path], parents=True, exist_ok=None):
