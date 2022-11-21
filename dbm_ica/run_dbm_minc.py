@@ -435,6 +435,44 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             )
         return _rename_log_callback
 
+    def copy_files_callback(helper: ScriptHelper, dpath_source: Path, 
+                            dpath_target: Path, fpath_main_results: list[Path]):
+
+        def _copy_files_callback():
+
+            # list all result files
+            helper.run_command(['ls', '-lh', dpath_source])
+
+            # copy all result files or just the main ones
+            if save_all:
+                fpaths_to_copy = dpath_source.iterdir()
+            else:
+                fpaths_to_copy = fpath_main_results
+
+            helper.mkdir(dpath_target)
+
+            for fpath_source in fpaths_to_copy:
+
+                # optionally compress nifti files
+                if compress_nii and fpath_source.suffix == EXT_NIFTI:
+                    fpath_source_gzip = Path(f'{fpath_source}{EXT_GZIP}')
+                    with fpath_source_gzip.open('wb') as file_gzip:
+                        helper.run_command(['gzip', '-c', fpath_source], stdout=file_gzip)
+                    fpath_source = fpath_source_gzip
+
+                # copy to output directory
+                helper.run_command([
+                    'cp',
+                    '-vfp', # verbose, force overwrite, preserve metadata
+                    fpath_source,
+                    dpath_target,
+                ])
+
+            # list files in output directory
+            helper.run_command(['ls', '-lh', dpath_target])
+
+        return _copy_files_callback
+
     # make sure input file exists and has valid extension
     if not fpath_nifti.exists():
         helper.print_error_and_exit(f'Nifti file not found: {fpath_nifti}')
@@ -445,9 +483,20 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             f'Valid extensions are: {valid_file_formats}'
         )
 
+    # skip if output subdirectory already exists and is not empty
+    helper.check_dir(dpath_out)
+
     with TemporaryDirectory() as dpath_tmp:
 
         dpath_tmp = Path(dpath_tmp)
+
+        fpaths_main_results = []
+        helper.callback_always = copy_files_callback(
+            helper=helper,
+            dpath_source=dpath_tmp,
+            dpath_target=dpath_out,
+            fpath_main_results=fpaths_main_results,
+        )
 
         # if zipped file, unzip
         if fpath_nifti.suffix == EXT_GZIP:
@@ -461,14 +510,11 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
 
         # for renaming the logfile based on nifti file name
         if rename_log:
-            helper.callback = rename_log_callback(
-                helper, 
-                f'{fpath_raw_nii.stem}{EXT_LOG}',
+            helper.callback_success = rename_log_callback(
+                helper=helper, 
+                fpath_new=f'{fpath_raw_nii.stem}{EXT_LOG}',
                 same_parent=True,
             )
-
-        # skip if output subdirectory already exists and is not empty
-        helper.check_dir(dpath_out)
 
         # convert to minc format
         fpath_raw = dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
@@ -477,6 +523,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
         # denoise
         fpath_denoised = add_suffix(fpath_raw, SUFFIX_DENOISED)
         helper.run_command(['mincnlm', '-verbose', fpath_raw, fpath_denoised])
+        fpaths_main_results.append(fpath_denoised)
 
         # normalize, scale, perform linear registration
         fpath_norm = add_suffix(fpath_denoised, SUFFIX_NORM)
@@ -504,9 +551,11 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             fpath_norm,
             fpath_mask,
         ])
+        fpaths_main_results.append(fpath_mask)
 
         # extract brain
         fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
+        fpaths_main_results.append(fpath_masked)
 
         # extract template brain
         fpath_template_masked = apply_mask(
@@ -529,6 +578,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             fpath_nonlinear_transform,
             fpath_nonlinear,
         ])
+        fpaths_main_results.append(fpath_nonlinear)
 
         # get DBM map (not template space)
         fpath_dbm_tmp = add_suffix(fpath_nonlinear, SUFFIX_DBM)
@@ -555,42 +605,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
         # convert back to nifti
         fpath_dbm_nii = fpath_dbm_masked.with_suffix(EXT_NIFTI)
         helper.run_command(['mnc2nii', '-nii', fpath_dbm_masked, fpath_dbm_nii])
-
-        # list all output files
-        helper.run_command(['ls', '-lh', dpath_tmp])
-
-        # copy all/some result files to output directory
-        if save_all:
-            fpaths_to_copy = dpath_tmp.iterdir()
-        else:
-            fpaths_to_copy = [
-                fpath_denoised,     # denoised
-                fpath_mask,         # brain mask (after linear registration)
-                fpath_masked,       # linearly registered (masked)
-                fpath_nonlinear,    # nonlinearly registered (masked)
-                fpath_dbm_nii,      # DBM map
-            ]
-
-        helper.mkdir(dpath_out)
-        for fpath_source in fpaths_to_copy:
-
-            # optionally compress nifti files
-            if compress_nii and fpath_source.suffix == EXT_NIFTI:
-                fpath_source_gzip = Path(f'{fpath_source}{EXT_GZIP}')
-                with fpath_source_gzip.open('wb') as file_gzip:
-                    helper.run_command(['gzip', '-c', fpath_source], stdout=file_gzip)
-                fpath_source = fpath_source_gzip
-
-            # move to output directory
-            helper.run_command([
-                'cp',
-                '-vfp', # verbose, force overwrite, preserve metadata
-                fpath_source,
-                dpath_out,
-            ])
-
-        # list files in output directory
-        helper.run_command(['ls', '-lh', dpath_out])
+        fpaths_main_results.append(fpath_dbm_nii)
 
 if __name__ == '__main__':
     cli()

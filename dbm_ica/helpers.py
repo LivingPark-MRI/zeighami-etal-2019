@@ -137,15 +137,23 @@ def with_helper(func):
                 
                 func(helper=helper, **kwargs)
 
-                if helper.callback is not None:
-                    helper.callback()
+                if helper.callback_success is not None:
+                    helper.callback_success()
 
                 helper.done()
 
             except Exception:
+
+                if helper.callback_failure is not None:
+                    helper.callback_failure()
+
                 helper.print_error_and_exit(traceback.format_exc())
 
             finally:
+
+                if helper.callback_always is not None:
+                    helper.callback_success()
+
                 helper.timestamp()
 
     return _with_helper
@@ -217,7 +225,9 @@ class ScriptHelper():
             prefix_run=PREFIX_RUN,
             prefix_error=PREFIX_ERROR,
             done_message=DONE_MESSAGE,
-            callback=None
+            callback_always=None,
+            callback_success=None,
+            callback_failure=None,
         ) -> None:
 
         # quiet overrides verbosity
@@ -232,7 +242,9 @@ class ScriptHelper():
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
         self.done_message = done_message
-        self.callback = callback
+        self.callback_always = callback_always
+        self.callback_success = callback_success
+        self.callback_failure = callback_failure
 
     def verbose(self, threshold=0):
         return self.verbosity > threshold
