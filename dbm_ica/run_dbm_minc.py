@@ -88,13 +88,14 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
         return_type='filename',
     )
 
-    helper.echo(f'Found {len(fpaths_t1)} T1 files')
+    helper.print_info(f'Found {len(fpaths_t1)} T1 files')
 
     # write paths to output file
     with fpath_out.open('w') as file_out:
         for fpath_t1 in fpaths_t1:
             fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
             file_out.write(f'{fpath_t1}\n')
+        helper.print_outcome(f'Wrote BIDS paths to {fpath_out}')
 
 @cli.command()
 @click.argument('dpath_bids', callback=callback_path)
@@ -104,16 +105,14 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
               type=click.IntRange(min=MIN_I_FILE))
 @click.option('-r', '--range', 'i_file_range', 
               type=click.IntRange(min=MIN_I_FILE), nargs=2)
-@click.option('-j', '--job', 'job_type', envvar='JOB_TYPE',
+@click.option('--job-type', 'job_type',
               type=click.Choice(VALID_JOB_TYPES,case_sensitive=False))
-@click.option('--job-resource', envvar='JOB_RESOURCE')
+@click.option('--job-resource')
+@click.option('--job-container', 'fpath_container', callback=callback_path)
 @click.option('--job-log', 'fpath_log_job', callback=callback_path,
-              default=f'{PREFIX_PIPELINE}{EXT_LOG}', 
-              envvar='FPATH_DBM_JOB_LOG')
-@click.option('-c', '--container', 'fpath_container', callback=callback_path,
-              envvar='FPATH_DBM_CONTAINER')
-@click.option('-m', '--memory', 'job_memory', default=DEFAULT_JOB_MEMORY)
-@click.option('-t', '--time', 'job_time', default=DEFAULT_JOB_TIME)
+              default=f'{PREFIX_PIPELINE}{EXT_LOG}')
+@click.option('--job-memory', default=DEFAULT_JOB_MEMORY)
+@click.option('--job-time', default=DEFAULT_JOB_TIME)
 @click.option('--rename-log/--no-rename-log', default=True)
 @add_dbm_minc_options()
 @add_common_options()
@@ -195,6 +194,8 @@ def bids_run(
             f'{fpath_container}',
             ' '.join(script_command_args),
         ]
+        singularity_command = ' '.join(singularity_command_args)
+        command_list = [singularity_command]
     
         # temporary file for job submission script
         with NamedTemporaryFile('w+t') as file_tmp:
@@ -219,14 +220,32 @@ def bids_run(
                     fpath_submission_tmp,
                 ]
 
+            elif job_type == JOB_TYPE_SLURM:
+
+                varname_array_job_id = 'SLURM_ARRAY_TASK_ID'
+                varname_job_id = 'SLURM_ARRAY_JOB_ID'
+                command_list.insert(0, 'module load singularity')
+
+                job_command_args = [
+                    'sbatch',
+                    f'--account={job_resource}',
+                    f'--array={i_file_min}-{i_file_max}:1',
+                    f'--job-name={PREFIX_PIPELINE}',
+                    f'--mem={job_memory}',
+                    f'--time={job_time}',
+                    f'--output={fpath_log_job}',
+                    '--open-mode=append',
+                    fpath_submission_tmp,
+                ]
+
             else:
                 raise NotImplementedError(
                     f'Not implemented for job type {job_type} yet'
                 )
 
             # job submission script
-            singularity_command = ' '.join(singularity_command_args)
             varname_command = 'COMMAND'
+            command = ' && '.join(command_list)
             submission_file_lines = [
                 '#!/bin/bash',
                 (
@@ -238,7 +257,7 @@ def bids_run(
                 f'echo "Memory: {job_memory}"',
                 f'echo "Time: {job_time}"',
                 f'{VARNAME_I_FILE}=${varname_array_job_id}',
-                f'{varname_command}="{singularity_command}"',
+                f'{varname_command}="{command}"',
                 'echo "--------------------"',
                 f'echo ${{{varname_command}}}',
                 'echo "--------------------"',
@@ -294,8 +313,8 @@ def bids_run(
                 dpath_out_bids = Path(layout_results.build_path(bids_entities)).parent
 
                 fpath_log = dpath_logs / f'{PREFIX_PIPELINE}-{i_file}{EXT_LOG}'
-                helper.echo(f'Running pipeline on T1 file {fpath_t1}')
-                helper.echo(f'\tLog: {fpath_log}')
+                helper.print_info(f'Running pipeline on T1 file {fpath_t1}')
+                helper.print_info(f'\tLog: {fpath_log}')
 
                 _run_dbm_minc(
                     fpath_nifti=fpath_t1,
