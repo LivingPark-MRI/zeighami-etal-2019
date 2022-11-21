@@ -405,7 +405,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
                   dpath_templates: Path, template_prefix: str, 
                   fpath_template: Path, fpath_template_mask: Path,
                   dpath_beast_lib: Path, fpath_conf: Path, 
-                  save_all: bool, rename_log: bool, **kwargs):
+                  save_all: bool, compress_nii: bool, rename_log: bool, **kwargs):
 
     def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
         fpath_orig = Path(fpath_orig)
@@ -573,6 +573,15 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
 
         helper.mkdir(dpath_out)
         for fpath_source in fpaths_to_copy:
+
+            # optionally compress nifti files
+            if compress_nii and fpath_source.suffix == EXT_NIFTI:
+                fpath_source_gzip = Path(f'{fpath_source}{EXT_GZIP}')
+                with fpath_source_gzip.open('wb') as file_gzip:
+                    helper.run_command(['gzip', '-c', fpath_source], stdout=file_gzip)
+                fpath_source = fpath_source_gzip
+
+            # move to output directory
             helper.run_command([
                 'cp',
                 '-vfp', # verbose, force overwrite, preserve metadata

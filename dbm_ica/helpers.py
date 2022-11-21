@@ -94,7 +94,9 @@ def add_dbm_minc_options():
                      help='Name of configuration file for mincbeast. '
                           f'Default: {DEFAULT_BEAST_CONF}.'),
         click.option('--save-all/--save-subset', default=False,
-                     help='Save all intermediate files')
+                     help='Save all intermediate files.'),
+        click.option('--compress-nii/no-compress-nii', default=True,
+                     help='Compress result files.'),
     ]
     return add_options(dbm_minc_options)
 
@@ -157,7 +159,6 @@ def check_dbm_inputs(func):
         template_prefix: str = DEFAULT_TEMPLATE,
         dpath_beast_lib: str = DNAME_BEAST_LIB,
         beast_conf: str = DEFAULT_BEAST_CONF,
-        save_all=False,
         **kwargs,
     ):
 
@@ -199,7 +200,6 @@ def check_dbm_inputs(func):
             fpath_template_mask=fpath_template_mask,
             dpath_beast_lib=dpath_beast_lib,
             fpath_conf=fpath_conf,
-            save_all=save_all,
             **kwargs,
         )
 
