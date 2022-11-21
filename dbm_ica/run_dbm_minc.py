@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory, NamedTemporaryFile
 from typing import Union
 
 import click
+import pandas as pd
 
 from bids import BIDSLayout
 from bids.layout import parse_file_entities
@@ -24,6 +25,7 @@ from helpers import (
     EXT_NIFTI,
     EXT_TRANSFORM,
     SUFFIX_T1,
+    SEP_SUFFIX,
 )
 
 # output file naming for DBM pipeline
@@ -38,9 +40,15 @@ SUFFIX_RESAMPLED = 'resampled'
 EXT_LOG = '.log'
 PREFIX_PIPELINE = 'dbm_minc'
 
-# subdirectory/file names
+# subdirectory names
 DNAME_OUTPUT = 'output'
 DNAME_LOGS = 'logs'
+
+# for check_status
+FNAME_STATUS = 'proc_status.csv'
+STATUS_PASS = 'PASS'
+STATUS_FAIL = 'FAIL'
+COL_PROC_PATH = 'fpath_input'
 
 # for multi-file command
 MIN_I_FILE = 1
@@ -329,6 +337,80 @@ def bids_run(
                 )
 
 @cli.command()
+@click.argument('fpath_bids_list', callback=callback_path)
+@click.argument('dpath_out', callback=callback_path)
+@click.option('-s', '--step', 'step_suffix_pairs', nargs=2, multiple=True, required=True)
+@click.option('-o', '--file-out', 'fname_out', default=FNAME_STATUS)
+@click.option('-e', '--extension-t1', 'ext_t1', default=f'{EXT_NIFTI}{EXT_GZIP}')
+@add_common_options()
+@with_helper
+def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path, 
+                 step_suffix_pairs, fname_out, ext_t1):
+
+    def get_fpath_t1(path_result, dpath_bids_root):
+        path_result = Path(path_result)
+        dpath_parent_rel = path_result.parent.relative_to(dpath_bids_root)
+        prefix = path_result.name.split('.')[0]
+        fname_raw = f'{prefix}{ext_t1}'
+        return str(dpath_parent_rel / fname_raw)
+
+    col_fpath_t1 = 'fpath_t1'
+
+    dpath_bids = dpath_out / DNAME_OUTPUT
+    fpath_out = (dpath_out / fname_out).resolve()
+
+    helper.check_file(fpath_out)
+
+    layout = BIDSLayout(dpath_bids, validate=False)
+    df_layout = layout.to_df()
+    df_layout[col_fpath_t1] = df_layout['path'].apply(
+        lambda path: get_fpath_t1(path, dpath_bids)
+    )
+
+    if helper.verbose():
+        helper.echo('\nChecking processing status for steps:')
+        for step, suffix in step_suffix_pairs:
+            helper.echo(f'{step}:\t{suffix}')
+
+    t1_proc_status_all = []
+    df_t1s = pd.read_csv(fpath_bids_list, header=None, names=[col_fpath_t1])
+    for fpath_t1 in df_t1s[col_fpath_t1]:
+
+        t1_proc_status = layout.parse_file_entities(fpath_t1)
+        t1_proc_status[COL_PROC_PATH] = fpath_t1
+
+        df_results = df_layout.loc[df_layout[col_fpath_t1] == fpath_t1]
+        extensions = df_results['extension'].tolist()
+
+        for step, suffix in step_suffix_pairs:
+            t1_proc_status[step] = (
+                STATUS_PASS
+                if (suffix in extensions)
+                else STATUS_FAIL
+            )
+
+        t1_proc_status_all.append(t1_proc_status)
+
+    # make df
+    df_proc_status = pd.DataFrame(t1_proc_status_all)
+
+    # reorder columns because entities are not the same for all T1 files
+    # sometimes there is an additional 'acquisition' field
+    # which gets appended to the df, but we want all entities to be before
+    # the other columns
+    cols_proc = df_proc_status.columns.to_list()
+    last_cols = [COL_PROC_PATH] + [step for step, _ in step_suffix_pairs]
+    for col in last_cols:
+        cols_proc.remove(col)
+        cols_proc.append(col)
+    df_proc_status = df_proc_status[cols_proc]
+
+    # write file
+    df_proc_status.to_csv(fpath_out, index=False, header=True)
+    if helper.verbose():
+        helper.echo(f'\nWrote file to {fpath_out}', text_color='blue')
+
+@cli.command()
 @click.argument('fpath_nifti', type=str, callback=callback_path)
 @click.argument('dpath_out', type=str, default='.', callback=callback_path)
 @add_dbm_minc_options()
@@ -342,7 +424,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
                   dpath_templates: Path, template_prefix: str, 
                   fpath_template: Path, fpath_template_mask: Path,
                   dpath_beast_lib: Path, fpath_conf: Path, 
-                  save_all: bool, rename_log: bool, **kwargs):
+                  save_all: bool, compress_nii: bool, rename_log: bool, **kwargs):
 
     def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
         fpath_orig = Path(fpath_orig)
@@ -372,6 +454,44 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             )
         return _rename_log_callback
 
+    def copy_files_callback(helper: ScriptHelper, dpath_source: Path, 
+                            dpath_target: Path, fpath_main_results: list[Path]):
+
+        def _copy_files_callback():
+
+            # list all result files
+            helper.run_command(['ls', '-lh', dpath_source])
+
+            # copy all result files or just the main ones
+            if save_all:
+                fpaths_to_copy = dpath_source.iterdir()
+            else:
+                fpaths_to_copy = fpath_main_results
+
+            helper.mkdir(dpath_target)
+
+            for fpath_source in fpaths_to_copy:
+
+                # optionally compress nifti files
+                if compress_nii and fpath_source.suffix == EXT_NIFTI:
+                    fpath_source_gzip = Path(f'{fpath_source}{EXT_GZIP}')
+                    with fpath_source_gzip.open('wb') as file_gzip:
+                        helper.run_command(['gzip', '-c', fpath_source], stdout=file_gzip)
+                    fpath_source = fpath_source_gzip
+
+                # copy to output directory
+                helper.run_command([
+                    'cp',
+                    '-vfp', # verbose, force overwrite, preserve metadata
+                    fpath_source,
+                    dpath_target,
+                ])
+
+            # list files in output directory
+            helper.run_command(['ls', '-lh', dpath_target])
+
+        return _copy_files_callback
+
     # make sure input file exists and has valid extension
     if not fpath_nifti.exists():
         helper.print_error_and_exit(f'Nifti file not found: {fpath_nifti}')
@@ -382,9 +502,20 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             f'Valid extensions are: {valid_file_formats}'
         )
 
+    # skip if output subdirectory already exists and is not empty
+    helper.check_dir(dpath_out)
+
     with TemporaryDirectory() as dpath_tmp:
 
         dpath_tmp = Path(dpath_tmp)
+
+        fpaths_main_results = []
+        helper.callback_always = copy_files_callback(
+            helper=helper,
+            dpath_source=dpath_tmp,
+            dpath_target=dpath_out,
+            fpath_main_results=fpaths_main_results,
+        )
 
         # if zipped file, unzip
         if fpath_nifti.suffix == EXT_GZIP:
@@ -398,14 +529,11 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
 
         # for renaming the logfile based on nifti file name
         if rename_log:
-            helper.callback = rename_log_callback(
-                helper, 
-                f'{fpath_raw_nii.stem}{EXT_LOG}',
+            helper.callback_success = rename_log_callback(
+                helper=helper, 
+                fpath_new=f'{fpath_raw_nii.stem}{EXT_LOG}',
                 same_parent=True,
             )
-
-        # skip if output subdirectory already exists and is not empty
-        helper.check_dir(dpath_out)
 
         # convert to minc format
         fpath_raw = dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
@@ -414,6 +542,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
         # denoise
         fpath_denoised = add_suffix(fpath_raw, SUFFIX_DENOISED)
         helper.run_command(['mincnlm', '-verbose', fpath_raw, fpath_denoised])
+        fpaths_main_results.append(fpath_denoised)
 
         # normalize, scale, perform linear registration
         fpath_norm = add_suffix(fpath_denoised, SUFFIX_NORM)
@@ -441,9 +570,11 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             fpath_norm,
             fpath_mask,
         ])
+        fpaths_main_results.append(fpath_mask)
 
         # extract brain
         fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
+        fpaths_main_results.append(fpath_masked)
 
         # extract template brain
         fpath_template_masked = apply_mask(
@@ -466,6 +597,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             fpath_nonlinear_transform,
             fpath_nonlinear,
         ])
+        fpaths_main_results.append(fpath_nonlinear)
 
         # get DBM map (not template space)
         fpath_dbm_tmp = add_suffix(fpath_nonlinear, SUFFIX_DBM)
@@ -492,33 +624,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
         # convert back to nifti
         fpath_dbm_nii = fpath_dbm_masked.with_suffix(EXT_NIFTI)
         helper.run_command(['mnc2nii', '-nii', fpath_dbm_masked, fpath_dbm_nii])
-
-        # list all output files
-        helper.run_command(['ls', '-lh', dpath_tmp])
-
-        # copy all/some result files to output directory
-        if save_all:
-            fpaths_to_copy = dpath_tmp.iterdir()
-        else:
-            fpaths_to_copy = [
-                fpath_denoised,     # denoised
-                fpath_mask,         # brain mask (after linear registration)
-                fpath_masked,       # linearly registered (masked)
-                fpath_nonlinear,    # nonlinearly registered (masked)
-                fpath_dbm_nii,      # DBM map
-            ]
-
-        helper.mkdir(dpath_out)
-        for fpath_source in fpaths_to_copy:
-            helper.run_command([
-                'cp',
-                '-vfp', # verbose, force overwrite, preserve metadata
-                fpath_source,
-                dpath_out,
-            ])
-
-        # list files in output directory
-        helper.run_command(['ls', '-lh', dpath_out])
+        fpaths_main_results.append(fpath_dbm_nii)
 
 if __name__ == '__main__':
     cli()

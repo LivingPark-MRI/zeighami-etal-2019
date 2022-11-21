@@ -22,6 +22,7 @@ EXT_GZIP = '.gz'
 EXT_MINC = '.mnc'
 EXT_TRANSFORM = '.xfm'
 SUFFIX_T1 = 'T1w'
+SEP_SUFFIX = '.'
 
 SUFFIX_TEMPLATE_MASK = '_mask' # MNI template naming convention
 ENV_VAR_DPATH_SHARE = 'MNI_DATAPATH'
@@ -36,7 +37,7 @@ DNAME_TEMPLATE_MAP = {
 def add_suffix(
     path: Union[Path, str], 
     suffix: str, 
-    sep: Union[str, None] = '.',
+    sep: Union[str, None] = SEP_SUFFIX,
 ) -> Path:
     if sep is not None:
         if suffix.startswith(sep):
@@ -93,7 +94,9 @@ def add_dbm_minc_options():
                      help='Name of configuration file for mincbeast. '
                           f'Default: {DEFAULT_BEAST_CONF}.'),
         click.option('--save-all/--save-subset', default=False,
-                     help='Save all intermediate files')
+                     help='Save all intermediate files.'),
+        click.option('--compress-nii/no-compress-nii', default=True,
+                     help='Compress result files.'),
     ]
     return add_options(dbm_minc_options)
 
@@ -135,15 +138,23 @@ def with_helper(func):
                 
                 func(helper=helper, **kwargs)
 
-                if helper.callback is not None:
-                    helper.callback()
+                if helper.callback_success is not None:
+                    helper.callback_success()
 
                 helper.done()
 
             except Exception:
+
+                if helper.callback_failure is not None:
+                    helper.callback_failure()
+
                 helper.print_error_and_exit(traceback.format_exc())
 
             finally:
+
+                if helper.callback_always is not None:
+                    helper.callback_success()
+
                 helper.print_separation()
                 helper.timestamp()
 
@@ -158,7 +169,6 @@ def check_dbm_inputs(func):
         template_prefix: str = DEFAULT_TEMPLATE,
         dpath_beast_lib: str = DNAME_BEAST_LIB,
         beast_conf: str = DEFAULT_BEAST_CONF,
-        save_all=False,
         **kwargs,
     ):
 
@@ -200,7 +210,6 @@ def check_dbm_inputs(func):
             fpath_template_mask=fpath_template_mask,
             dpath_beast_lib=dpath_beast_lib,
             fpath_conf=fpath_conf,
-            save_all=save_all,
             **kwargs,
         )
 
@@ -218,7 +227,9 @@ class ScriptHelper():
             prefix_run=PREFIX_RUN,
             prefix_error=PREFIX_ERROR,
             done_message=DONE_MESSAGE,
-            callback=None
+            callback_always=None,
+            callback_success=None,
+            callback_failure=None,
         ) -> None:
 
         # quiet overrides verbosity
@@ -233,7 +244,12 @@ class ScriptHelper():
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
         self.done_message = done_message
-        self.callback = callback
+        self.callback_always = callback_always
+        self.callback_success = callback_success
+        self.callback_failure = callback_failure
+
+    def verbose(self, threshold=0):
+        return self.verbosity > threshold
     
     @property
     def verbose(self):
