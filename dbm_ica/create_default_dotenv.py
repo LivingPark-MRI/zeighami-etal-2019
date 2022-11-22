@@ -4,13 +4,14 @@ from pathlib import Path
 import click
 from helpers import add_common_options, callback_path, ScriptHelper, with_helper
 
-FNAME_DBM_LOG = 'dbm_minc.log'
 FNAME_CONTAINER = 'nd-minc_1_9_16-fsl_5_0_11-click_pandas_pybids.sif'
 FNAME_BIDS_LIST = 'bids_list.txt'
 
 DNAME_OUT = 'out'
 DNAME_OUT_DBM = 'dbm'
 DNAME_OUT_ICA = 'ica'
+
+DNAME_JOB_LOGS = 'jobs'
 
 @click.command()
 @click.argument('dpath-root', default='.', callback=callback_path)
@@ -48,7 +49,7 @@ def create_default_dotenv(
     constants['DPATH_MRI_SCRIPTS'] = constants['DPATH_ROOT'] / 'dbm_ica'
     constants['FPATH_DBM_SCRIPT'] = constants['DPATH_MRI_SCRIPTS'] / 'run_dbm_minc.py'
     constants['FPATH_DBM_CONTAINER'] = constants['DPATH_MRI_SCRIPTS'] / FNAME_CONTAINER
-    constants['FPATH_DBM_JOB_LOG'] = constants['DPATH_MRI_SCRIPTS'] / FNAME_DBM_LOG
+    constants['DPATH_JOB_LOGS'] = constants['DPATH_ROOT'] / DNAME_JOB_LOGS
 
     # MRI output
     constants['DPATH_OUT'] = constants['DPATH_ROOT'] / DNAME_OUT

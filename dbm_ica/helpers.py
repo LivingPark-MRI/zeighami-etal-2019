@@ -7,6 +7,7 @@ import traceback
 
 from contextlib import nullcontext
 from functools import wraps
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from typing import Union, TextIO
 
@@ -122,41 +123,43 @@ def with_helper(func):
         if with_log:
             fpath_log.parent.mkdir(parents=True, exist_ok=True)
 
-        with fpath_log.open('w') if with_log else nullcontext() as file_log:
-            helper = ScriptHelper(
-                file_log=file_log,
-                verbosity=verbosity,
-                quiet=quiet,
-                dry_run=dry_run,
-                overwrite=overwrite,
-                prefix_run=prefix_run,
-                prefix_error=prefix_error,
-            )
-            try:
-                helper.timestamp()
-                helper.print_separation()
-                
-                func(helper=helper, **kwargs)
+        with TemporaryDirectory() as dpath_tmp:
+            with fpath_log.open('w') if with_log else nullcontext() as file_log:
+                helper = ScriptHelper(
+                    file_log=file_log,
+                    verbosity=verbosity,
+                    quiet=quiet,
+                    dry_run=dry_run,
+                    overwrite=overwrite,
+                    prefix_run=prefix_run,
+                    prefix_error=prefix_error,
+                    dpath_tmp = Path(dpath_tmp),
+                )
+                try:
+                    helper.timestamp()
+                    helper.print_separation()
+                    
+                    func(helper=helper, **kwargs)
 
-                if helper.callback_success is not None:
-                    helper.callback_success()
+                    if helper.callback_success is not None:
+                        helper.callback_success()
 
-                helper.done()
+                    helper.done()
 
-            except Exception:
+                except Exception:
 
-                if helper.callback_failure is not None:
-                    helper.callback_failure()
+                    if helper.callback_failure is not None:
+                        helper.callback_failure()
 
-                helper.print_error_and_exit(traceback.format_exc())
+                    helper.print_error_and_exit(traceback.format_exc())
 
-            finally:
+                finally:
 
-                if helper.callback_always is not None:
-                    helper.callback_always()
+                    if helper.callback_always is not None:
+                        helper.callback_always()
 
-                helper.print_separation()
-                helper.timestamp()
+                    helper.print_separation()
+                    helper.timestamp()
 
     return _with_helper
 
@@ -224,6 +227,7 @@ class ScriptHelper():
             quiet=False,
             dry_run=False,
             overwrite=False,
+            dpath_tmp=None,
             prefix_run=PREFIX_RUN,
             prefix_error=PREFIX_ERROR,
             done_message=DONE_MESSAGE,
@@ -241,6 +245,7 @@ class ScriptHelper():
         self.quiet = quiet
         self.dry_run = dry_run
         self.overwrite = overwrite
+        self.dpath_tmp = dpath_tmp
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
         self.done_message = done_message
