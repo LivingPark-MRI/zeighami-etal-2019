@@ -25,7 +25,7 @@ source ${FPATH_DOTENV}
 # "
 
 # ========================================
-# submit a job to run the DBM pipeline on a single file
+# submit a job to run the DBM pipeline on multiple files
 # ========================================
 COMMAND="
 	${FPATH_DBM_SCRIPT} bids-run \
@@ -35,21 +35,23 @@ COMMAND="
 		--job-type ${JOB_TYPE} \
 		--job-resource ${JOB_RESOURCE} \
 		--job-container ${FPATH_DBM_CONTAINER} \
-		-i 3 \
+        --job-log-dir ${DPATH_JOB_LOGS} \
+		-r 1 10 \
 "
 
 # # ========================================
-# # submit a job to run the DBM pipeline on multiple files
+# # check DBM processing status
 # # ========================================
 # COMMAND="
-# 	${FPATH_DBM_SCRIPT} bids-run \
-# 		${DPATH_BIDS} \
-# 		${FPATH_BIDS_LIST} \
-# 		${DPATH_OUT_DBM} \
-# 		--job-type ${JOB_TYPE} \
-# 		--job-resource ${JOB_RESOURCE} \
-# 		--job-container ${FPATH_DBM_CONTAINER} \
-# 		-r 1 10 \
+#     ${FPATH_DBM_SCRIPT} check-status \
+#         ${FPATH_BIDS_LIST} \
+#         ${DPATH_OUT_DBM} \
+#         --step denoised .denoised.mnc \
+#         --step lin_reg .denoised.norm_lr.masked.mnc \
+#         --step lin_reg_mask .denoised.norm_lr_mask.mnc \
+#         --step nonlin_reg .denoised.norm_lr.masked.nlr.mnc \
+#         --step dbm_nii .denoised.norm_lr.masked.nlr.dbm.resampled.masked.nii.gz \
+#         --overwrite \
 # "
 
 echo ${COMMAND}
