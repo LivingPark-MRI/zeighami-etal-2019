@@ -22,6 +22,31 @@ source ${FPATH_DOTENV}
 # 	${FPATH_DBM_SCRIPT} bids-generate \
 # 		${DPATH_BIDS} \
 # 		${FPATH_BIDS_LIST} \
+# 	&& \
+# 	cp ${FPATH_BIDS_LIST} "$(dirname ${FPATH_BIDS_LIST})/bids_list-all.txt" \
+# "
+
+# # ========================================
+# # get a subset of the bids_list rows given a PPMI cohort ID and session ID
+# # after this is done rename the desired file to FPATH_BIDS_LIST
+# # ========================================
+# # main cohort: _1606091907888136448
+# # validation cohort: _7192068301964860554
+# COHORT_ID="_1606091907888136448"
+# SESSION_ID="1"
+# DPATH_BIDS_LIST=`dirname ${FPATH_BIDS_LIST}`
+# FPATH_BIDS_LIST_ALL="${DPATH_BIDS_LIST}/bids_list-all.txt"
+# if [ ! -f ${FPATH_BIDS_LIST_ALL} ]
+# then
+# 	echo "File not found: ${FPATH_BIDS_LIST_ALL}"
+# 	exit 1
+# fi
+# COMMAND="
+# 	grep -f ${DPATH_ROOT}/zeighami-etal-2019-cohort-${COHORT_ID}.csv ${FPATH_BIDS_LIST_ALL} \
+# 		> ${DPATH_BIDS_LIST}/bids_list-${COHORT_ID}.txt \
+# 	&& \
+# 	grep ses-${SESSION_ID}_ ${DPATH_BIDS_LIST}/bids_list-${COHORT_ID}.txt \
+# 		> ${DPATH_BIDS_LIST}/bids_list-${COHORT_ID}-ses_${SESSION_ID}.txt \
 # "
 
 # ========================================
