@@ -116,8 +116,6 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
               type=click.Choice(VALID_JOB_TYPES,case_sensitive=False))
 @click.option('--job-resource')
 @click.option('--job-container', 'fpath_container', callback=callback_path)
-# @click.option('--job-log', 'fpath_log_job', callback=callback_path,
-#               default=f'{PREFIX_PIPELINE}{EXT_LOG}')
 @click.option('--job-log-dir', 'dpath_job_log', callback=callback_path, default='.')
 @click.option('--job-memory', default=DEFAULT_JOB_MEMORY)
 @click.option('--job-time', default=DEFAULT_JOB_TIME)
@@ -134,7 +132,6 @@ def bids_run(
     i_file_range: Union[tuple, None],
     job_type: str,
     job_resource: str,
-    # fpath_log_job: Path,
     dpath_job_log: Path,
     fpath_container: Union[Path, None],
     job_memory: str,
@@ -506,11 +503,13 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
     helper.check_dir(dpath_out)
 
     fpaths_main_results = []
-    helper.callback_always = copy_files_callback(
-        helper=helper,
-        dpath_source=helper.dpath_tmp,
-        dpath_target=dpath_out,
-        fpath_main_results=fpaths_main_results,
+    helper.callback_always.append(
+        copy_files_callback(
+            helper=helper,
+            dpath_source=helper.dpath_tmp,
+            dpath_target=dpath_out,
+            fpath_main_results=fpaths_main_results,
+        )
     )
 
     # if zipped file, unzip
@@ -525,10 +524,12 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
 
     # for renaming the logfile based on nifti file name
     if rename_log:
-        helper.callback_success = rename_log_callback(
-            helper=helper, 
-            fpath_new=f'{fpath_raw_nii.stem}{EXT_LOG}',
-            same_parent=True,
+        helper.callbacks_success.append(
+            rename_log_callback(
+                helper=helper,
+                fpath_new=f'{fpath_raw_nii.stem}{EXT_LOG}',
+                same_parent=True,
+            )
         )
 
     # convert to minc format

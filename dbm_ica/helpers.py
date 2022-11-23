@@ -141,22 +141,22 @@ def with_helper(func):
                     
                     func(helper=helper, **kwargs)
 
-                    if helper.callback_success is not None:
-                        helper.callback_success()
+                    for callback in helper.callbacks_success:
+                        callback()
 
                     helper.done()
 
                 except Exception:
 
-                    if helper.callback_failure is not None:
-                        helper.callback_failure()
+                    for callback in helper.callback_failure:
+                        callback()
 
                     helper.print_error_and_exit(traceback.format_exc())
 
                 finally:
 
-                    if helper.callback_always is not None:
-                        helper.callback_always()
+                    for callback in helper.callback_always:
+                        callback()
 
                     helper.print_separation()
                     helper.timestamp()
@@ -231,27 +231,34 @@ class ScriptHelper():
             prefix_run=PREFIX_RUN,
             prefix_error=PREFIX_ERROR,
             done_message=DONE_MESSAGE,
-            callback_always=None,
-            callback_success=None,
-            callback_failure=None,
+            callbacks_always=None,
+            callbacks_success=None,
+            callbacks_failure=None,
         ) -> None:
 
         # quiet overrides verbosity
         if quiet:
             verbosity = 0
 
+        if callbacks_always is None:
+            callbacks_always = []
+        if callbacks_success is None:
+            callbacks_success = []
+        if callbacks_failure is None:
+            callbacks_failure = []
+
         self.file_log = file_log
         self.verbosity = verbosity
         self.quiet = quiet
         self.dry_run = dry_run
         self.overwrite = overwrite
-        self.dpath_tmp = dpath_tmp
+        self.dpath_tmp: Path = dpath_tmp
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
         self.done_message = done_message
-        self.callback_always = callback_always
-        self.callback_success = callback_success
-        self.callback_failure = callback_failure
+        self.callback_always: list = callbacks_always
+        self.callbacks_success: list = callbacks_success
+        self.callback_failure: list = callbacks_failure
 
     def verbose(self, threshold=0):
         return self.verbosity > threshold
