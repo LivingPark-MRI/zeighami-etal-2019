@@ -24,6 +24,7 @@ from helpers import (
     EXT_MINC,
     EXT_NIFTI,
     EXT_TRANSFORM,
+    SEP_SUFFIX,
     SUFFIX_T1,
 )
 
@@ -52,6 +53,9 @@ STATUS_ALL_FAIL = 'ALL_FAIL'
 STATUS_PARTIAL_PASS = 'PARTIAL_PASS'
 COL_PROC_PATH = 'fpath_input'
 COL_SUMMARY = 'summary'
+
+# for get_dbm_list
+FNAME_DBM_LIST = 'dbm_list.txt'
 
 # for multi-file command
 MIN_I_FILE = 1
@@ -457,6 +461,45 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
 @add_common_options()
 def file(**kwargs):
     _run_dbm_minc(**kwargs)
+
+@cli.command()
+@click.argument('dpath_out', default='.', callback=callback_path)
+@click.option('-n', type=int, default=None)
+@click.option('--file-out', 'fname_out', default=FNAME_DBM_LIST)
+@click.option('--suffix', 'dbm_suffix')
+@click.option('--file-status', 'fname_status', default=FNAME_STATUS)
+@add_common_options()
+@with_helper
+def get_dbm_list(helper: ScriptHelper, dpath_out: Path, n, fname_out, dbm_suffix, fname_status):
+
+    if dbm_suffix is None:
+        dbm_suffix_components = [
+            SUFFIX_DENOISED, SUFFIX_NORM, SUFFIX_MASKED, SUFFIX_NONLINEAR,
+            SUFFIX_DBM, SUFFIX_RESAMPLED, SUFFIX_MASKED,
+        ]
+        dbm_suffix = f'{SEP_SUFFIX}{SEP_SUFFIX.join(dbm_suffix_components)}{EXT_NIFTI}{EXT_GZIP}'
+    
+    fpath_status: Path = dpath_out / fname_status
+    fpath_out: Path = dpath_out / fname_out
+
+    if not fpath_status.exists():
+        helper.print_error_and_exit(f'Processing status file not found: {fpath_status}')
+
+    helper.check_file(fpath_out)
+
+    df_status = pd.read_csv(fpath_status)
+    df_status_pass = df_status.loc[df_status[COL_SUMMARY] == STATUS_ALL_PASS]
+
+    if n is not None:
+        df_status_pass = df_status_pass.iloc[:n]
+
+    dbm_list = df_status_pass[COL_PROC_PATH].apply(
+        lambda p: p.split('.')[0] + dbm_suffix
+    )
+
+    dbm_list.to_csv(fpath_out, header=False, index=False)
+
+    helper.print_outcome(f'Wrote DBM filename list to {fpath_out}')
 
 @with_helper
 @check_dbm_inputs
