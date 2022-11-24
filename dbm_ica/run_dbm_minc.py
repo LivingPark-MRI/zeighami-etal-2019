@@ -148,16 +148,19 @@ def bids_run(
     if i_file_single is not None:
         i_file_range = (i_file_single, i_file_single)
 
+    # get the maximum possible i_file
+    max_i_file = MIN_I_FILE
+    with fpath_bids_list.open() as file_bids_list:
+        for _ in file_bids_list:
+            max_i_file += 1
+
     # get min/max of range
     if i_file_range is not None:
-        i_file_min = min(i_file_range)
-        i_file_max = max(i_file_range)
+        i_file_start = min(i_file_range)
+        i_file_stop = max(i_file_range + (max_i_file,))
     else:
-        i_file_min = MIN_I_FILE
-        with fpath_bids_list.open() as file_bids_list:
-            i_file_max = MIN_I_FILE
-            for _ in file_bids_list:
-                i_file_max += 1
+        i_file_start = MIN_I_FILE
+        i_file_stop = max_i_file
 
     # submit job array
     if job_type is not None:
@@ -218,7 +221,7 @@ def bids_run(
                     # '-cwd',
                     '-N', PREFIX_PIPELINE,
                     '-q', job_resource,
-                    '-t', f'{i_file_min}-{i_file_max}:1',
+                    '-t', f'{i_file_start}-{i_file_stop}:1',
                     '-l', f'h_vmem={job_memory}',
                     '-l', f'h_rt={job_time}',
                     '-j', 'y',
@@ -235,7 +238,7 @@ def bids_run(
                 job_command_args = [
                     'sbatch',
                     f'--account={job_resource}',
-                    f'--array={i_file_min}-{i_file_max}:1',
+                    f'--array={i_file_start}-{i_file_stop}:1',
                     f'--job-name={PREFIX_PIPELINE}',
                     f'--mem={job_memory}',
                     f'--time={job_time}',
@@ -301,9 +304,9 @@ def bids_run(
 
             for i_file, line in enumerate(file_bids_list, start=MIN_I_FILE):
 
-                if i_file < i_file_min:
+                if i_file < i_file_start:
                     continue
-                if i_file > i_file_max:
+                if i_file > i_file_stop:
                     break
 
                 # remove newline
@@ -374,10 +377,14 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
 
     helper.print_info('Checking processing status for steps:')
     for step, suffix in step_suffix_pairs:
-        helper.print_info(f'{step}:\t{suffix}')
+        helper.print_info(f'\t{step}:\t{suffix}')
 
     t1_proc_status_all = []
     df_t1s = pd.read_csv(fpath_bids_list, header=None, names=[col_fpath_t1])
+    n_files = len(df_t1s)
+    n_all_pass = 0
+    n_partial_pass = 0
+    n_fail = 0
     for fpath_t1 in df_t1s[col_fpath_t1]:
 
         t1_proc_status = layout.parse_file_entities(fpath_t1)
@@ -386,14 +393,31 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
         df_results = df_layout.loc[df_layout[col_fpath_t1] == fpath_t1]
         extensions = df_results['extension'].tolist()
 
+        n_steps_passed = 0
+
         for step, suffix in step_suffix_pairs:
-            t1_proc_status[step] = (
-                STATUS_PASS
-                if (suffix in extensions)
-                else STATUS_FAIL
-            )
+
+            if suffix in extensions:
+                status = STATUS_PASS
+                n_steps_passed += 1
+            else:
+                status = STATUS_FAIL
+
+            t1_proc_status[step] = status
+        
+        if n_steps_passed == 0:
+            n_fail += 1
+        elif n_steps_passed == len(step_suffix_pairs):
+            n_all_pass += 1
+        else:
+            n_partial_pass += 1
 
         t1_proc_status_all.append(t1_proc_status)
+
+    helper.print_info(f'{n_files} input files total:')
+    helper.print_info(f'\t{n_all_pass}\tfiles with all results available')
+    helper.print_info(f'\t{n_partial_pass}\tfiles with some results available')
+    helper.print_info(f'\t{n_fail}\tfiles with no results available')
 
     # make df
     df_proc_status = pd.DataFrame(t1_proc_status_all)
