@@ -47,7 +47,11 @@ DNAME_LOGS = 'logs'
 FNAME_STATUS = 'proc_status.csv'
 STATUS_PASS = 'PASS'
 STATUS_FAIL = 'FAIL'
+STATUS_ALL_PASS = 'ALL_PASS'
+STATUS_ALL_FAIL = 'ALL_FAIL'
+STATUS_PARTIAL_PASS = 'PARTIAL_PASS'
 COL_PROC_PATH = 'fpath_input'
+COL_SUMMARY = 'summary'
 
 # for multi-file command
 MIN_I_FILE = 1
@@ -377,6 +381,8 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
 
     helper.print_info('Checking processing status for steps:')
     for step, suffix in step_suffix_pairs:
+        if step in [COL_SUMMARY, COL_PROC_PATH]:
+            helper.print_error_and_exit(f'Invalid step name: {step}')
         helper.print_info(f'\t{step}:\t{suffix}')
 
     t1_proc_status_all = []
@@ -397,6 +403,9 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
 
         for step, suffix in step_suffix_pairs:
 
+            if step in t1_proc_status:
+                helper.print_error_and_exit(f'Invalid step name: {step}')
+
             if suffix in extensions:
                 status = STATUS_PASS
                 n_steps_passed += 1
@@ -407,11 +416,15 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
         
         if n_steps_passed == 0:
             n_fail += 1
+            status_summary = STATUS_ALL_FAIL
         elif n_steps_passed == len(step_suffix_pairs):
             n_all_pass += 1
+            status_summary = STATUS_ALL_PASS
         else:
             n_partial_pass += 1
+            status_summary = STATUS_PARTIAL_PASS
 
+        t1_proc_status[COL_SUMMARY] = status_summary
         t1_proc_status_all.append(t1_proc_status)
 
     helper.print_info(f'{n_files} input files total:')
@@ -427,7 +440,7 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
     # which gets appended to the df, but we want all entities to be before
     # the other columns
     cols_proc = df_proc_status.columns.to_list()
-    last_cols = [COL_PROC_PATH] + [step for step, _ in step_suffix_pairs]
+    last_cols = [COL_PROC_PATH] + [step for step, _ in step_suffix_pairs] + [COL_SUMMARY]
     for col in last_cols:
         cols_proc.remove(col)
         cols_proc.append(col)
@@ -495,7 +508,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             else:
                 fpaths_to_copy = fpath_main_results
 
-            helper.mkdir(dpath_target)
+            helper.mkdir(dpath_target, exist_ok=True)
 
             for fpath_source in fpaths_to_copy:
 
