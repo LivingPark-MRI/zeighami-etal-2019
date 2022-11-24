@@ -380,13 +380,16 @@ class ScriptHelper():
         if not self.dry_run:
             Path(path).mkdir(parents=parents, exist_ok=exist_ok)
 
-    def check_dir(self, dpath: Path):
+    def check_dir(self, dpath: Path, exit=True):
         if dpath.exists() and (not self.overwrite):
             if sum([p.is_file() for p in dpath.rglob('*')]) != 0:
-                self.print_error_and_exit(
-                    f'Directory {dpath} exists and is not empty. '
-                    'Use --overwrite to overwrite.'
-                )
+                if exit:
+                    self.print_error_and_exit(
+                        f'Directory {dpath} exists and is not empty. '
+                        'Use --overwrite to overwrite.'
+                    )
+                else:
+                    raise FileExistsError(f'Directory exists: {dpath}')
         return dpath
 
     def check_file(self, fpath: Path):

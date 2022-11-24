@@ -319,6 +319,12 @@ def bids_run(
                 bids_entities = parse_file_entities(fpath_t1)
                 dpath_out_bids = Path(layout_results.build_path(bids_entities)).parent
 
+                try:
+                    helper.check_dir(dpath_out_bids, exit=False)
+                except FileExistsError:
+                    helper.print_info(f'Skipping {fpath_t1}')
+                    continue
+
                 fpath_log = dpath_logs / f'{PREFIX_PIPELINE}-{i_file}{EXT_LOG}'
                 helper.print_info(f'Running pipeline on T1 file {fpath_t1}')
                 helper.print_info(f'\tLog: {fpath_log}')
