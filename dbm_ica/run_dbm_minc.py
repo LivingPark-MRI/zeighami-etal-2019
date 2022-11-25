@@ -463,14 +463,18 @@ def file(**kwargs):
     _run_dbm_minc(**kwargs)
 
 @cli.command()
+@click.argument('dpath_dbm', default='.', callback=callback_path)
 @click.argument('dpath_out', default='.', callback=callback_path)
 @click.option('-n', type=int, default=None)
-@click.option('--file-out', 'fname_out', default=FNAME_DBM_LIST)
+@click.option('-o', '--file-out', 'fname_out', default=FNAME_DBM_LIST)
 @click.option('--suffix', 'dbm_suffix')
 @click.option('--file-status', 'fname_status', default=FNAME_STATUS)
 @add_common_options()
 @with_helper
-def get_dbm_list(helper: ScriptHelper, dpath_out: Path, n, fname_out, dbm_suffix, fname_status):
+def get_dbm_list(
+    helper: ScriptHelper, dpath_dbm: Path, dpath_out: Path, 
+    n, fname_out, dbm_suffix, fname_status,
+    ):
 
     if dbm_suffix is None:
         dbm_suffix_components = [
@@ -479,7 +483,7 @@ def get_dbm_list(helper: ScriptHelper, dpath_out: Path, n, fname_out, dbm_suffix
         ]
         dbm_suffix = f'{SEP_SUFFIX}{SEP_SUFFIX.join(dbm_suffix_components)}{EXT_NIFTI}{EXT_GZIP}'
     
-    fpath_status: Path = dpath_out / fname_status
+    fpath_status: Path = dpath_dbm / fname_status
     fpath_out: Path = dpath_out / fname_out
 
     if not fpath_status.exists():
@@ -492,6 +496,8 @@ def get_dbm_list(helper: ScriptHelper, dpath_out: Path, n, fname_out, dbm_suffix
 
     if n is not None:
         df_status_pass = df_status_pass.iloc[:n]
+
+    helper.print_info(f'Selected {len(df_status_pass)} files')
 
     dbm_list = df_status_pass[COL_PROC_PATH].apply(
         lambda p: p.split('.')[0] + dbm_suffix
