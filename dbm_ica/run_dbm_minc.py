@@ -165,10 +165,12 @@ def bids_run(
     # get min/max of range
     if i_file_range is not None:
         i_file_start = min(i_file_range)
-        i_file_stop = max(i_file_range + (max_i_file,))
+        i_file_stop = min(max(i_file_range), max_i_file)
     else:
         i_file_start = MIN_I_FILE
         i_file_stop = max_i_file
+
+    print(f'i_file:\t{i_file_start}-{i_file_stop}')
 
     # submit job array
     if job_type is not None:
@@ -226,7 +228,6 @@ def bids_run(
 
                 job_command_args = [
                     'qsub',
-                    # '-cwd',
                     '-N', PREFIX_PIPELINE,
                     '-q', job_resource,
                     '-t', f'{i_file_start}-{i_file_stop}:1',
@@ -331,7 +332,8 @@ def bids_run(
                 dpath_out_bids = Path(layout_results.build_path(bids_entities)).parent
 
                 try:
-                    helper.check_dir(dpath_out_bids, exit=False)
+                    helper.check_dir(dpath_out_bids, exit=False, 
+                                     prefix=fpath_t1.name.split('.')[0])
                 except FileExistsError:
                     helper.print_info(f'Skipping {fpath_t1}')
                     continue
@@ -592,7 +594,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
         )
 
     # skip if output subdirectory already exists and is not empty
-    helper.check_dir(dpath_out)
+    helper.check_dir(dpath_out, prefix=fpath_nifti.name.split('.')[0])
 
     fpaths_main_results = []
     helper.callback_always.append(
