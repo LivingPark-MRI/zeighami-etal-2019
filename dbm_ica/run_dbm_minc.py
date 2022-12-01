@@ -85,7 +85,7 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
 
     # make sure input directory exists
     if not dpath_bids.exists():
-        helper.print_error_and_exit(f'BIDS directory not found: {dpath_bids}')
+        helper.print_error(f'BIDS directory not found: {dpath_bids}')
 
     # check if file exists
     helper.check_file(fpath_out)
@@ -176,17 +176,17 @@ def bids_run(
 
         # make sure job account/queue is specified
         if job_resource is None:
-            helper.print_error_and_exit(
+            helper.print_error(
                 '--job-resource must be specified when --job is given',
             )
 
         # make sure container is specified and exists
         if fpath_container is None:
-            helper.print_error_and_exit(
+            helper.print_error(
                 '--container must be specified when --job is given',
             )
         if not fpath_container.exists():
-            helper.print_error_and_exit(
+            helper.print_error(
                 f'Container not found: {fpath_container}'
             )
 
@@ -331,7 +331,7 @@ def bids_run(
                 dpath_out_bids = Path(layout_results.build_path(bids_entities)).parent
 
                 try:
-                    helper.check_dir(dpath_out_bids, exit=False, 
+                    helper.check_dir(dpath_out_bids, 
                                      prefix=fpath_t1.name.split('.')[0])
                 except FileExistsError:
                     helper.print_info(f'Skipping {fpath_t1}')
@@ -341,17 +341,24 @@ def bids_run(
                 helper.print_info(f'Running pipeline on T1 file {fpath_t1}')
                 helper.print_info(f'\tLog: {fpath_log}')
 
-                _run_dbm_minc(
-                    fpath_nifti=fpath_t1,
-                    dpath_out=dpath_out_bids,
-                    fpath_log=fpath_log, # new log file
-                    rename_log=rename_log,
-                    verbosity=helper.verbosity,
-                    quiet=helper.quiet,
-                    dry_run=helper.dry_run,
-                    overwrite=helper.overwrite,
-                    **kwargs,
-                )
+                try:
+                    _run_dbm_minc(
+                        fpath_nifti=fpath_t1,
+                        dpath_out=dpath_out_bids,
+                        fpath_log=fpath_log, # new log file
+                        rename_log=rename_log,
+                        verbosity=helper.verbosity,
+                        quiet=helper.quiet,
+                        dry_run=helper.dry_run,
+                        overwrite=helper.overwrite,
+                        exit_on_error=False,
+                        **kwargs,
+                    )
+                except Exception as ex:
+                    helper.print_info(
+                        f'An error occured when running on {fpath_t1}: {ex}',
+                        text_color='red',
+                    )
 
 @cli.command()
 @click.argument('fpath_bids_list', callback=callback_path)
@@ -387,7 +394,7 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
     helper.print_info('Checking processing status for steps:')
     for step, suffix in step_suffix_pairs:
         if step in [COL_SUMMARY, COL_PROC_PATH]:
-            helper.print_error_and_exit(f'Invalid step name: {step}')
+            helper.print_error(f'Invalid step name: {step}')
         helper.print_info(f'\t{step}:\t{suffix}')
 
     t1_proc_status_all = []
@@ -409,7 +416,7 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
         for step, suffix in step_suffix_pairs:
 
             if step in t1_proc_status:
-                helper.print_error_and_exit(f'Invalid step name: {step}')
+                helper.print_error(f'Invalid step name: {step}')
 
             if suffix in extensions:
                 status = STATUS_PASS
@@ -488,7 +495,7 @@ def get_dbm_list(
     fpath_out: Path = dpath_out / fname_out
 
     if not fpath_status.exists():
-        helper.print_error_and_exit(f'Processing status file not found: {fpath_status}')
+        helper.print_error(f'Processing status file not found: {fpath_status}')
 
     helper.check_file(fpath_out)
 
@@ -584,10 +591,10 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
 
     # make sure input file exists and has valid extension
     if not fpath_nifti.exists():
-        helper.print_error_and_exit(f'Nifti file not found: {fpath_nifti}')
+        helper.print_error(f'Nifti file not found: {fpath_nifti}')
     valid_file_formats = (EXT_NIFTI, f'{EXT_NIFTI}{EXT_GZIP}')
     if not str(fpath_nifti).endswith(valid_file_formats):
-        helper.print_error_and_exit(
+        helper.print_error(
             f'Invalid file format for {fpath_nifti}. '
             f'Valid extensions are: {valid_file_formats}'
         )
@@ -596,7 +603,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
     helper.check_dir(dpath_out, prefix=fpath_nifti.name.split('.')[0])
 
     fpaths_main_results = []
-    helper.callback_always.append(
+    helper.callbacks_always.append(
         copy_files_callback(
             helper=helper,
             dpath_source=helper.dpath_tmp,
@@ -617,7 +624,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
 
     # for renaming the logfile based on nifti file name
     if rename_log:
-        helper.callbacks_success.append(
+        helper.callbacks_always.append(
             rename_log_callback(
                 helper=helper,
                 fpath_new=f'{fpath_raw_nii.stem}{EXT_LOG}',

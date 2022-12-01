@@ -58,7 +58,7 @@ def create_default_dotenv(
     constants['DPATH_OUT_ICA'] = constants['DPATH_OUT'] / DNAME_OUT_ICA
 
     if not Path(constants['DPATH_MRI_SCRIPTS']).exists():
-        helper.print_error_and_exit(
+        helper.print_error(
             f'Directory not found: {constants["DPATH_MRI_SCRIPTS"]}. '
             'Make sure root directory is correct.'
         )

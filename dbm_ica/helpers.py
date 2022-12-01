@@ -114,6 +114,7 @@ def with_helper(func):
         quiet: bool = False,
         dry_run: bool = False,
         overwrite: bool = False,
+        exit_on_error: bool = True,
         prefix_run: str = PREFIX_RUN,
         prefix_error: str = PREFIX_ERROR,
         **kwargs,
@@ -146,16 +147,17 @@ def with_helper(func):
 
                     helper.done()
 
-                except Exception:
+                except Exception as ex:
 
                     for callback in helper.callback_failure:
                         callback()
 
-                    helper.print_error_and_exit(traceback.format_exc())
+                    helper.print_error(traceback.format_exc(), exit=exit_on_error)
+                    raise ex
 
                 finally:
 
-                    for callback in helper.callback_always:
+                    for callback in helper.callbacks_always:
                         callback()
 
                     helper.print_separation()
@@ -177,9 +179,9 @@ def check_dbm_inputs(func):
 
         # make sure necessary paths are given
         if dpath_share is None and (dpath_templates is None or dpath_beast_lib is None):
-                helper.print_error_and_exit('If --share-dir is not given, both '
-                                            '--template-dir and --beast-lib-dir '
-                                            'must be specified.')
+                raise ValueError('If --share-dir is not given, both '
+                                 '--template-dir and --beast-lib-dir '
+                                 'must be specified.')
         if dpath_templates is None:
             dpath_templates = dpath_share / DNAME_TEMPLATE_MAP[template_prefix]
         if dpath_beast_lib is None:
@@ -190,20 +192,20 @@ def check_dbm_inputs(func):
         fpath_template_mask = add_suffix(fpath_template, 
                                         SUFFIX_TEMPLATE_MASK, sep=None)
         if not fpath_template.exists():
-            helper.print_error_and_exit(f'Template file not found: {fpath_template}')
+            raise FileNotFoundError(f'Template file not found: {fpath_template}')
         if not fpath_template_mask.exists():
-            helper.print_error_and_exit(
+            raise FileNotFoundError(
                 f'Template mask file not found: {fpath_template_mask}'
             )
 
         # make sure beast library and config file can be found
         if not dpath_beast_lib.exists():
-            helper.print_error_and_exit(
+            raise FileNotFoundError(
                 f'BEaST library directory not found: {dpath_beast_lib}'
             )
         fpath_conf = dpath_beast_lib / beast_conf
         if not fpath_conf.exists():
-            helper.print_error_and_exit(f'mincbeast config file not found: {fpath_conf}')
+            raise FileNotFoundError(f'mincbeast config file not found: {fpath_conf}')
 
         func(
             helper=helper,
@@ -256,7 +258,7 @@ class ScriptHelper():
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
         self.done_message = done_message
-        self.callback_always: list = callbacks_always
+        self.callbacks_always: list = callbacks_always
         self.callbacks_success: list = callbacks_success
         self.callback_failure: list = callbacks_failure
 
@@ -302,7 +304,7 @@ class ScriptHelper():
     def print_outcome(self, message='', text_color='blue'):
         self.echo(message=message, text_color=text_color)
 
-    def print_error_and_exit(self, message, text_color='red', exit_code=1):
+    def print_error(self, message, text_color='red', exit_code=1, exit=True):
         """Print a message and exit the program.
 
         Parameters
@@ -315,7 +317,8 @@ class ScriptHelper():
             Program return code, by default 1
         """
         self.echo(message, prefix=self.prefix_error, text_color=text_color)
-        sys.exit(exit_code)
+        if exit:
+            sys.exit(exit_code)
 
     def run_command(
             self,
@@ -362,9 +365,8 @@ class ScriptHelper():
                 subprocess.run(args, check=True, shell=shell,
                                stdout=stdout, stderr=stderr)
             except subprocess.CalledProcessError as ex:
-                self.print_error_and_exit(
+                raise RuntimeError(
                     f'\nCommand {args_str} returned {ex.returncode}',
-                    exit_code=ex.returncode,
                 )
 
     def timestamp(self):
@@ -380,7 +382,7 @@ class ScriptHelper():
         if not self.dry_run:
             Path(path).mkdir(parents=parents, exist_ok=exist_ok)
 
-    def check_dir(self, dpath: Path, exit=True, prefix=None):
+    def check_dir(self, dpath: Path, prefix=None):
         if dpath.exists() and (not self.overwrite):
 
             # get all files in directory
@@ -390,18 +392,15 @@ class ScriptHelper():
                 files_in_dir = [p for p in files_in_dir if p.name.startswith(prefix)]
             
             if len(files_in_dir) != 0:
-                if exit:
-                    self.print_error_and_exit(
-                        f'Directory {dpath} exists and/or contains expected result files. '
-                        'Use --overwrite to overwrite.'
-                    )
-                else:
-                    raise FileExistsError(f'Directory exists: {dpath}')
+                raise FileExistsError(
+                    f'Directory {dpath} exists and/or contains expected result files. '
+                    'Use --overwrite to overwrite.'
+                )
                     
         return dpath
 
     def check_file(self, fpath: Path):
         if fpath.exists() and not self.overwrite:
-            self.print_error_and_exit(
+            raise FileExistsError(
                 f'File {fpath} exists. Use --overwrite to overwrite.'
             )
