@@ -19,11 +19,11 @@ source ${FPATH_DOTENV}
 # # generate T1 file list from BIDS data directory
 # # ========================================
 # COMMAND="
-# 	${FPATH_DBM_SCRIPT} bids-generate \
+# 	${FPATH_SCRIPT} bids-list \
 # 		${DPATH_BIDS} \
 # 		${FPATH_BIDS_LIST} \
 # 	&& \
-# 	cp ${FPATH_BIDS_LIST} "$(dirname ${FPATH_BIDS_LIST})/bids_list-all.txt" \
+# 	cp ${FPATH_BIDS_LIST} ${FPATH_BIDS_LIST_ALL} \
 # "
 
 # # ========================================
@@ -35,7 +35,6 @@ source ${FPATH_DOTENV}
 # COHORT_ID="_1606091907888136448"
 # SESSION_ID="1"
 # DPATH_BIDS_LIST=`dirname ${FPATH_BIDS_LIST}`
-# FPATH_BIDS_LIST_ALL="${DPATH_BIDS_LIST}/bids_list-all.txt"
 # if [ ! -f ${FPATH_BIDS_LIST_ALL} ]
 # then
 # 	echo "File not found: ${FPATH_BIDS_LIST_ALL}"
@@ -53,22 +52,22 @@ source ${FPATH_DOTENV}
 # submit a job to run the DBM pipeline on multiple files
 # ========================================
 COMMAND="
-	${FPATH_DBM_SCRIPT} bids-run \
+	${FPATH_SCRIPT} dbm-from-bids \
 		${DPATH_BIDS} \
 		${FPATH_BIDS_LIST} \
 		${DPATH_OUT_DBM} \
 		--job-type ${JOB_TYPE} \
 		--job-resource ${JOB_RESOURCE} \
-		--job-container ${FPATH_DBM_CONTAINER} \
+		--job-container ${FPATH_CONTAINER} \
         --job-log-dir ${DPATH_JOB_LOGS} \
-		-r 1 10 \
+		-r 1 155 \
 "
 
 # # ========================================
 # # check DBM processing status
 # # ========================================
 # COMMAND="
-#     ${FPATH_DBM_SCRIPT} check-status \
+#     ${FPATH_SCRIPT} dbm-status \
 #         ${FPATH_BIDS_LIST} \
 #         ${DPATH_OUT_DBM} \
 #         --step denoised .denoised.mnc \
@@ -76,6 +75,17 @@ COMMAND="
 #         --step lin_reg_mask .denoised.norm_lr_mask.mnc \
 #         --step nonlin_reg .denoised.norm_lr.masked.nlr.mnc \
 #         --step dbm_nii .denoised.norm_lr.masked.nlr.dbm.resampled.masked.nii.gz \
+#         --overwrite \
+# "
+
+# # ========================================
+# # generate DBM result file list
+# # ========================================
+# COMMAND="
+#     ${FPATH_SCRIPT} dbm-list \
+#         ${DPATH_OUT_DBM} \
+#         ${FPATH_DBM_LIST} \
+#         --threshold 3 \
 #         --overwrite \
 # "
 

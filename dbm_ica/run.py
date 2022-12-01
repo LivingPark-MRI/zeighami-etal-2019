@@ -54,9 +54,6 @@ STATUS_PARTIAL_PASS = 'PARTIAL_PASS'
 COL_PROC_PATH = 'fpath_input'
 COL_SUMMARY = 'summary'
 
-# for get_dbm_list
-FNAME_DBM_LIST = 'dbm_list.txt'
-
 # for multi-file command
 MIN_I_FILE = 1
 
@@ -72,6 +69,9 @@ BINDPATH_BIDS_DATA = '/mnt/bids'
 BINDPATH_OUT = '/mnt/out'
 BINDPATH_BIDS_LIST = '/mnt/bids_list'
 
+# for ICA command
+PREFIX_DBM_MERGED = 'dbm_merged'
+
 @click.group()
 def cli():
     return
@@ -81,7 +81,7 @@ def cli():
 @click.argument('fpath_out', type=str, callback=callback_path)
 @add_common_options()
 @with_helper
-def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
+def bids_list(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
 
     # make sure input directory exists
     if not dpath_bids.exists():
@@ -131,7 +131,7 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
 @add_dbm_minc_options()
 @add_common_options()
 @with_helper
-def bids_run(
+def dbm_from_bids(
     dpath_bids: Path,
     fpath_bids_list: Path,
     dpath_out: Path,
@@ -368,7 +368,7 @@ def bids_run(
 @click.option('-e', '--extension-t1', 'ext_t1', default=f'{EXT_NIFTI}{EXT_GZIP}')
 @add_common_options()
 @with_helper
-def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path, 
+def dbm_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path, 
                  step_suffix_pairs, fname_out, ext_t1):
 
     def get_fpath_t1(path_result, dpath_bids_root):
@@ -465,23 +465,23 @@ def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path,
 @cli.command()
 @click.argument('fpath_nifti', type=str, callback=callback_path)
 @click.argument('dpath_out', type=str, default='.', callback=callback_path)
+@click.option('--rename-log/--no-rename-log', default=True)
 @add_dbm_minc_options()
 @add_common_options()
-def file(**kwargs):
+def dbm_from_file(**kwargs):
     _run_dbm_minc(**kwargs)
 
 @cli.command()
-@click.argument('dpath_dbm', default='.', callback=callback_path)
-@click.argument('dpath_out', default='.', callback=callback_path)
+@click.argument('dpath_dbm', callback=callback_path)
+@click.argument('fpath_out', callback=callback_path)
 @click.option('-n', type=int, default=None)
-@click.option('-o', '--file-out', 'fname_out', default=FNAME_DBM_LIST)
 @click.option('--suffix', 'dbm_suffix')
 @click.option('--file-status', 'fname_status', default=FNAME_STATUS)
 @add_common_options()
 @with_helper
-def get_dbm_list(
-    helper: ScriptHelper, dpath_dbm: Path, dpath_out: Path, 
-    n, fname_out, dbm_suffix, fname_status,
+def dbm_list(
+    helper: ScriptHelper, dpath_dbm: Path, fpath_out: Path, 
+    n, dbm_suffix, fname_status,
     ):
 
     if dbm_suffix is None:
@@ -492,7 +492,6 @@ def get_dbm_list(
         dbm_suffix = f'{SEP_SUFFIX}{SEP_SUFFIX.join(dbm_suffix_components)}{EXT_NIFTI}{EXT_GZIP}'
     
     fpath_status: Path = dpath_dbm / fname_status
-    fpath_out: Path = dpath_out / fname_out
 
     if not fpath_status.exists():
         helper.print_error(f'Processing status file not found: {fpath_status}')
@@ -514,6 +513,81 @@ def get_dbm_list(
     dbm_list.to_csv(fpath_out, header=False, index=False)
 
     helper.print_outcome(f'Wrote DBM filename list to {fpath_out}')
+
+@cli.command()
+@click.argument('fpath_filenames', callback=callback_path)
+@click.argument('dpath_dbm', callback=callback_path)
+@click.argument('dpath_out', callback=callback_path)
+@click.option('--symlink/--no-symlink', default=False)
+@click.option('--threshold', type=float, default=0)
+@click.option('-d', '--dim', type=int, help='Number of PCA components')
+@click.option('-n', '--n-components', type=int, help='Number of ICA components')
+@add_common_options()
+@with_helper
+def ica(helper: ScriptHelper, fpath_filenames: Path, dpath_dbm: Path, 
+        dpath_out: Path, threshold, symlink, dim, n_components, **kwargs):
+
+    dpath_tmp = helper.dpath_tmp
+    dpath_results = dpath_out / DNAME_OUTPUT
+    dpath_dbm_bids = dpath_dbm / DNAME_OUTPUT
+
+    helper.check_dir(dpath_results)
+    helper.mkdir(dpath_results, exist_ok=True)
+
+    # read files and make symlinks
+    fpaths_nii_tmp = []
+    with fpath_filenames.open('r') as file_filenames:
+
+        for line in file_filenames:
+
+            line = line.strip()
+            if line == '':
+                continue
+
+            fpath_nii = dpath_dbm_bids / line
+            if not fpath_nii.exists():
+                helper.print_error(f'File not found: {fpath_nii}')
+
+            if symlink:
+                fpath_nii_tmp = dpath_tmp / fpath_nii.name
+                helper.run_command(
+                    ['ln', '-s', fpath_nii, fpath_nii_tmp],
+                    silent=True,
+                )
+            else:
+                fpath_nii_tmp = fpath_nii
+
+            fpaths_nii_tmp.append(fpath_nii_tmp)
+
+    # merge into a single nifti file
+    # concatenate in 4th (time) dimension
+    fpath_merged = dpath_tmp / f'{PREFIX_DBM_MERGED}{EXT_NIFTI}{EXT_GZIP}'
+    helper.run_command(['fslmerge', '-t', fpath_merged] + fpaths_nii_tmp)
+    
+    # check image dimensions
+    helper.run_command(['fslinfo', fpath_merged])
+
+    # check image dimensions
+    helper.run_command(['cp', '-vfp', fpath_merged, dpath_results])
+
+    # melodic options
+    n_components_flag = '' if (n_components is None) else f'--numICs={n_components}'
+    dim_flag = '' if (dim is None) else f'--dim={dim}'
+
+    helper.run_command([
+        'melodic',
+        '-i', fpath_merged,
+        '-o', dpath_results,
+        dim_flag,           # number of principal components
+        n_components_flag,  # number of independent components
+        f'--mmthresh={threshold}',     # threshold for z-statistic map
+        '--nobet',          # without brain extraction
+        '--Oall',           # output everything
+        '--report',         # create HTML report
+        '-v',               # verbose
+    ])
+
+    helper.run_command(['ls', '-lh', dpath_out])
 
 @with_helper
 @check_dbm_inputs
