@@ -161,6 +161,7 @@ def bids_run(
     with fpath_bids_list.open() as file_bids_list:
         for _ in file_bids_list:
             max_i_file += 1
+    max_i_file -= 1 # overcounted
 
     # get min/max of range
     if i_file_range is not None:
@@ -169,8 +170,6 @@ def bids_run(
     else:
         i_file_start = MIN_I_FILE
         i_file_stop = max_i_file
-
-    print(f'i_file:\t{i_file_start}-{i_file_stop}')
 
     # submit job array
     if job_type is not None:

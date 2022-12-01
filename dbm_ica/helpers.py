@@ -380,16 +380,24 @@ class ScriptHelper():
         if not self.dry_run:
             Path(path).mkdir(parents=parents, exist_ok=exist_ok)
 
-    def check_dir(self, dpath: Path, exit=True):
+    def check_dir(self, dpath: Path, exit=True, prefix=None):
         if dpath.exists() and (not self.overwrite):
-            if sum([p.is_file() for p in dpath.rglob('*')]) != 0:
+
+            # get all files in directory
+            files_in_dir = [p for p in dpath.rglob('*') if p.is_file()]
+            # optionally keep only those with a specific prefix
+            if prefix is not None:
+                files_in_dir = [p for p in files_in_dir if p.name.startswith(prefix)]
+            
+            if len(files_in_dir) != 0:
                 if exit:
                     self.print_error_and_exit(
-                        f'Directory {dpath} exists and is not empty. '
+                        f'Directory {dpath} exists and/or contains expected result files. '
                         'Use --overwrite to overwrite.'
                     )
                 else:
                     raise FileExistsError(f'Directory exists: {dpath}')
+                    
         return dpath
 
     def check_file(self, fpath: Path):
