@@ -68,9 +68,11 @@ BINDPATH_SCRIPTS = '/mnt/scripts'
 BINDPATH_BIDS_DATA = '/mnt/bids'
 BINDPATH_OUT = '/mnt/out'
 BINDPATH_BIDS_LIST = '/mnt/bids_list'
+N_THREADS_JOBS = 4
 
 # for ICA command
 PREFIX_DBM_MERGED = 'dbm_merged'
+ICA_RES = 4.0
 
 @click.group()
 def cli():
@@ -126,7 +128,7 @@ def bids_list(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
 @click.option('--job-container', 'fpath_container', callback=callback_path)
 @click.option('--job-log-dir', 'dpath_job_log', callback=callback_path, default='.')
 @click.option('--job-memory', default=DEFAULT_JOB_MEMORY)
-@click.option('--job-time', default=DEFAULT_JOB_TIME)
+@click.option('--job-time')
 @click.option('--rename-log/--no-rename-log', default=True)
 @add_dbm_minc_options()
 @add_common_options()
@@ -174,6 +176,10 @@ def dbm_from_bids(
     # submit job array
     if job_type is not None:
 
+        if job_time is None:
+            if job_type != JOB_TYPE_SGE:
+                job_time = DEFAULT_JOB_TIME
+
         # make sure job account/queue is specified
         if job_resource is None:
             helper.print_error(
@@ -196,7 +202,7 @@ def dbm_from_bids(
         dpath_scripts = fpath_script.parent
 
         script_command_args = [
-            f'{bindpath_script} bids-run',
+            f'{bindpath_script} dbm-from-bids',
             f'{BINDPATH_BIDS_DATA} {BINDPATH_BIDS_LIST} {BINDPATH_OUT}',
             f'-i ${VARNAME_I_FILE}',
             '--rename-log' if rename_log else '',
@@ -225,17 +231,22 @@ def dbm_from_bids(
                 varname_array_job_id = 'SGE_TASK_ID'
                 varname_job_id = 'JOB_ID'
 
+                if (job_time is None) or (len(job_time) == 0):
+                    time_flags = []
+                else:
+                    time_flags = ['-l', f'h_rt={job_time}']
+
                 job_command_args = [
                     'qsub',
                     '-N', PREFIX_PIPELINE,
                     '-q', job_resource,
                     '-t', f'{i_file_start}-{i_file_stop}:1',
                     '-l', f'h_vmem={job_memory}',
-                    '-l', f'h_rt={job_time}',
+                    # '-l', f'h_rt={job_time}',
                     '-j', 'y',
                     '-o', f'{dpath_job_log}/$JOB_NAME-$JOB_ID-$TASK_ID{EXT_LOG}',
                     fpath_submission_tmp,
-                ]
+                ] + time_flags
 
             elif job_type == JOB_TYPE_SLURM:
 
@@ -275,6 +286,9 @@ def dbm_from_bids(
                 f'echo "Time: {job_time}"',
                 f'{VARNAME_I_FILE}=${varname_array_job_id}',
                 f'{varname_command}="{command}"',
+                f'export MKL_NUM_THREADS={N_THREADS_JOBS}',
+                f'export NUMEXPR_NUM_THREADS={N_THREADS_JOBS}',
+                f'export OMP_NUM_THREADS={N_THREADS_JOBS}',
                 'echo "--------------------"',
                 f'echo ${{{varname_command}}}',
                 'echo "--------------------"',
