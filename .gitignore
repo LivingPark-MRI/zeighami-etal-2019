@@ -11,6 +11,9 @@ __pycache__
 # log files
 *.log
 
+# environment variables
+.env
+
 # DBM-ICA output files
 out*
 

@@ -7,6 +7,7 @@ import traceback
 
 from contextlib import nullcontext
 from functools import wraps
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from typing import Union, TextIO
 
@@ -15,13 +16,14 @@ import click
 DEFAULT_VERBOSITY = 2
 PREFIX_RUN = '[RUN] '
 PREFIX_ERROR = '[ERROR] '
-DONE_MESSAGE = '[DONE]'
+DONE_MESSAGE = '[SUCCESS]'
 
 EXT_NIFTI = '.nii'
 EXT_GZIP = '.gz'
 EXT_MINC = '.mnc'
 EXT_TRANSFORM = '.xfm'
 SUFFIX_T1 = 'T1w'
+SEP_SUFFIX = '.'
 
 SUFFIX_TEMPLATE_MASK = '_mask' # MNI template naming convention
 ENV_VAR_DPATH_SHARE = 'MNI_DATAPATH'
@@ -36,7 +38,7 @@ DNAME_TEMPLATE_MAP = {
 def add_suffix(
     path: Union[Path, str], 
     suffix: str, 
-    sep: Union[str, None] = '.',
+    sep: Union[str, None] = SEP_SUFFIX,
 ) -> Path:
     if sep is not None:
         if suffix.startswith(sep):
@@ -47,7 +49,7 @@ def add_suffix(
     return path.parent / f'{path.stem}{sep}{suffix}{path.suffix}'
 
 def process_path(path: str) -> Path:
-    return Path(path).expanduser().absolute()
+    return Path(path).expanduser().resolve()
 
 def add_options(options):
     def _add_options(func):
@@ -93,7 +95,9 @@ def add_dbm_minc_options():
                      help='Name of configuration file for mincbeast. '
                           f'Default: {DEFAULT_BEAST_CONF}.'),
         click.option('--save-all/--save-subset', default=False,
-                     help='Save all intermediate files')
+                     help='Save all intermediate files.'),
+        click.option('--compress-nii/--no-compress-nii', default=True,
+                     help='Compress result files.'),
     ]
     return add_options(dbm_minc_options)
 
@@ -119,31 +123,43 @@ def with_helper(func):
         if with_log:
             fpath_log.parent.mkdir(parents=True, exist_ok=True)
 
-        with fpath_log.open('w') if with_log else nullcontext() as file_log:
-            helper = ScriptHelper(
-                file_log=file_log,
-                verbosity=verbosity,
-                quiet=quiet,
-                dry_run=dry_run,
-                overwrite=overwrite,
-                prefix_run=prefix_run,
-                prefix_error=prefix_error,
-            )
-            try:
-                helper.timestamp()
-                
-                func(helper=helper, **kwargs)
+        with TemporaryDirectory() as dpath_tmp:
+            with fpath_log.open('w') if with_log else nullcontext() as file_log:
+                helper = ScriptHelper(
+                    file_log=file_log,
+                    verbosity=verbosity,
+                    quiet=quiet,
+                    dry_run=dry_run,
+                    overwrite=overwrite,
+                    prefix_run=prefix_run,
+                    prefix_error=prefix_error,
+                    dpath_tmp = Path(dpath_tmp),
+                )
+                try:
+                    helper.timestamp()
+                    helper.print_separation()
+                    
+                    func(helper=helper, **kwargs)
 
-                if helper.callback is not None:
-                    helper.callback()
+                    for callback in helper.callbacks_success:
+                        callback()
 
-                helper.done()
+                    helper.done()
 
-            except Exception:
-                helper.print_error_and_exit(traceback.format_exc())
+                except Exception:
 
-            finally:
-                helper.timestamp()
+                    for callback in helper.callback_failure:
+                        callback()
+
+                    helper.print_error_and_exit(traceback.format_exc())
+
+                finally:
+
+                    for callback in helper.callback_always:
+                        callback()
+
+                    helper.print_separation()
+                    helper.timestamp()
 
     return _with_helper
 
@@ -156,7 +172,6 @@ def check_dbm_inputs(func):
         template_prefix: str = DEFAULT_TEMPLATE,
         dpath_beast_lib: str = DNAME_BEAST_LIB,
         beast_conf: str = DEFAULT_BEAST_CONF,
-        save_all=False,
         **kwargs,
     ):
 
@@ -198,7 +213,6 @@ def check_dbm_inputs(func):
             fpath_template_mask=fpath_template_mask,
             dpath_beast_lib=dpath_beast_lib,
             fpath_conf=fpath_conf,
-            save_all=save_all,
             **kwargs,
         )
 
@@ -213,27 +227,47 @@ class ScriptHelper():
             quiet=False,
             dry_run=False,
             overwrite=False,
+            dpath_tmp=None,
             prefix_run=PREFIX_RUN,
             prefix_error=PREFIX_ERROR,
             done_message=DONE_MESSAGE,
-            callback=None
+            callbacks_always=None,
+            callbacks_success=None,
+            callbacks_failure=None,
         ) -> None:
 
         # quiet overrides verbosity
         if quiet:
             verbosity = 0
 
+        if callbacks_always is None:
+            callbacks_always = []
+        if callbacks_success is None:
+            callbacks_success = []
+        if callbacks_failure is None:
+            callbacks_failure = []
+
         self.file_log = file_log
         self.verbosity = verbosity
         self.quiet = quiet
         self.dry_run = dry_run
         self.overwrite = overwrite
+        self.dpath_tmp: Path = dpath_tmp
         self.prefix_run = prefix_run
         self.prefix_error = prefix_error
         self.done_message = done_message
-        self.callback = callback
+        self.callback_always: list = callbacks_always
+        self.callbacks_success: list = callbacks_success
+        self.callback_failure: list = callbacks_failure
+
+    def verbose(self, threshold=0):
+        return self.verbosity > threshold
     
-    def echo(self, message, prefix='', text_color=None, color_prefix_only=False):
+    @property
+    def verbose(self):
+        return self.verbosity > 0
+
+    def echo(self, message='', prefix='', text_color=None, color_prefix_only=False):
         """
         Print a message and newline to stdout or a file, similar to click.echo() 
         but with some color processing.
@@ -257,6 +291,16 @@ class ScriptHelper():
             text = click.style(f'{prefix}{message}', fg=text_color)
 
         click.echo(text, color=True, file=self.file_log)
+
+    def print_separation(self, symbol='-', length=20):
+        self.echo(symbol * length)
+
+    def print_info(self, message='', text_color=None):
+        if self.verbose:
+            self.echo(message=message, text_color=text_color)
+
+    def print_outcome(self, message='', text_color='blue'):
+        self.echo(message=message, text_color=text_color)
 
     def print_error_and_exit(self, message, text_color='red', exit_code=1):
         """Print a message and exit the program.
@@ -319,7 +363,7 @@ class ScriptHelper():
                                stdout=stdout, stderr=stderr)
             except subprocess.CalledProcessError as ex:
                 self.print_error_and_exit(
-                    f'Command {args_str} returned {ex.returncode}',
+                    f'\nCommand {args_str} returned {ex.returncode}',
                     exit_code=ex.returncode,
                 )
 
@@ -328,7 +372,6 @@ class ScriptHelper():
         self.run_command(['date'], force=True)
 
     def done(self):
-        self.echo('')
         self.echo(self.done_message, text_color='green')
 
     def mkdir(self, path: Union[str, Path], parents=True, exist_ok=None):
@@ -337,13 +380,16 @@ class ScriptHelper():
         if not self.dry_run:
             Path(path).mkdir(parents=parents, exist_ok=exist_ok)
 
-    def check_dir(self, dpath: Path):
+    def check_dir(self, dpath: Path, exit=True):
         if dpath.exists() and (not self.overwrite):
             if sum([p.is_file() for p in dpath.rglob('*')]) != 0:
-                self.print_error_and_exit(
-                    f'Directory {dpath} exists and is not empty. '
-                    'Use --overwrite to overwrite.'
-                )
+                if exit:
+                    self.print_error_and_exit(
+                        f'Directory {dpath} exists and is not empty. '
+                        'Use --overwrite to overwrite.'
+                    )
+                else:
+                    raise FileExistsError(f'Directory exists: {dpath}')
         return dpath
 
     def check_file(self, fpath: Path):
