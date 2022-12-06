@@ -72,6 +72,7 @@ N_THREADS_JOBS = 4
 
 # for ICA command
 PREFIX_DBM_MERGED = 'dbm_merged'
+DNAME_MELODIC_RESULTS = 'melodic_results'
 ICA_RES = 4.0
 
 @click.group()
@@ -534,21 +535,24 @@ def dbm_list(
 @click.argument('dpath_out', callback=callback_path)
 @click.option('--symlink/--no-symlink', default=False)
 @click.option('--threshold', type=float, default=0)
+@click.option('--resample', 'resample_resolution', type=float, default=ICA_RES)
 @click.option('-d', '--dim', type=int, help='Number of PCA components')
 @click.option('-n', '--n-components', type=int, help='Number of ICA components')
 @add_common_options()
 @with_helper
 def ica(helper: ScriptHelper, fpath_filenames: Path, dpath_dbm: Path, 
-        dpath_out: Path, threshold, symlink, dim, n_components, **kwargs):
+        dpath_out: Path, threshold, symlink, resample_resolution, dim, n_components, 
+        **kwargs):
 
     dpath_tmp = helper.dpath_tmp
     dpath_results = dpath_out / DNAME_OUTPUT
+    dpath_melodic_results = dpath_results / DNAME_MELODIC_RESULTS
     dpath_dbm_bids = dpath_dbm / DNAME_OUTPUT
 
-    helper.check_dir(dpath_results)
+    helper.check_dir(dpath_results, prefix=PREFIX_DBM_MERGED)
     helper.mkdir(dpath_results, exist_ok=True)
 
-    # read files and make symlinks
+    # read files and make symlinks (if needed)
     fpaths_nii_tmp = []
     with fpath_filenames.open('r') as file_filenames:
 
@@ -575,14 +579,30 @@ def ica(helper: ScriptHelper, fpath_filenames: Path, dpath_dbm: Path,
 
     # merge into a single nifti file
     # concatenate in 4th (time) dimension
-    fpath_merged = dpath_tmp / f'{PREFIX_DBM_MERGED}{EXT_NIFTI}{EXT_GZIP}'
+    fpath_merged = dpath_results / f'{PREFIX_DBM_MERGED}{EXT_NIFTI}{EXT_GZIP}'
     helper.run_command(['fslmerge', '-t', fpath_merged] + fpaths_nii_tmp)
     
     # check image dimensions
     helper.run_command(['fslinfo', fpath_merged])
 
+    # downsample
+    fpath_resampled = add_suffix(
+        fpath_merged, 
+        SUFFIX_RESAMPLED, 
+        ext=''.join(fpath_merged.suffixes)
+    )
+    helper.run_command([
+        'flirt', 
+        '-in', fpath_merged, 
+        '-ref', fpath_merged,
+        '-applyisoxfm', resample_resolution,
+        '-nosearch',
+        '-verbose', 1,
+        '-out', fpath_resampled,
+    ])
+
     # check image dimensions
-    helper.run_command(['cp', '-vfp', fpath_merged, dpath_results])
+    helper.run_command(['fslinfo', fpath_resampled])
 
     # melodic options
     n_components_flag = '' if (n_components is None) else f'--numICs={n_components}'
@@ -590,18 +610,18 @@ def ica(helper: ScriptHelper, fpath_filenames: Path, dpath_dbm: Path,
 
     helper.run_command([
         'melodic',
-        '-i', fpath_merged,
-        '-o', dpath_results,
+        '-i', fpath_resampled,
+        '-o', dpath_melodic_results,
         dim_flag,           # number of principal components
         n_components_flag,  # number of independent components
         f'--mmthresh={threshold}',     # threshold for z-statistic map
-        '--nobet',          # without brain extraction
+        # '--nobet',          # without brain extraction
         '--Oall',           # output everything
         '--report',         # create HTML report
         '-v',               # verbose
     ])
 
-    helper.run_command(['ls', '-lh', dpath_out])
+    helper.run_command(['ls', '-lh', dpath_results])
 
 @with_helper
 @check_dbm_inputs

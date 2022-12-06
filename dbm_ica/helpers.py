@@ -39,14 +39,23 @@ def add_suffix(
     path: Union[Path, str], 
     suffix: str, 
     sep: Union[str, None] = SEP_SUFFIX,
+    ext: Union[str, None] = None,
 ) -> Path:
+
     if sep is not None:
         if suffix.startswith(sep):
             suffix = suffix[len(sep):]
     else:
         sep = ''
-    path = Path(path)
-    return path.parent / f'{path.stem}{sep}{suffix}{path.suffix}'
+
+    if ext is not None:
+        stem = str(path).removesuffix(ext)
+    else:
+        path = Path(path)
+        stem = path.stem
+        ext = path.suffix
+
+    return path.parent / f'{stem}{sep}{suffix}{ext}'
 
 def process_path(path: str) -> Path:
     return Path(path).expanduser().resolve()
