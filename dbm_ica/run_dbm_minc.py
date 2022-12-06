@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 from pathlib import Path
-from tempfile import TemporaryDirectory, NamedTemporaryFile
+from tempfile import NamedTemporaryFile
 from typing import Union
 
 import click
+import pandas as pd
 
 from bids import BIDSLayout
 from bids.layout import parse_file_entities
@@ -38,9 +39,15 @@ SUFFIX_RESAMPLED = 'resampled'
 EXT_LOG = '.log'
 PREFIX_PIPELINE = 'dbm_minc'
 
-# subdirectory/file names
+# subdirectory names
 DNAME_OUTPUT = 'output'
 DNAME_LOGS = 'logs'
+
+# for check_status
+FNAME_STATUS = 'proc_status.csv'
+STATUS_PASS = 'PASS'
+STATUS_FAIL = 'FAIL'
+COL_PROC_PATH = 'fpath_input'
 
 # for multi-file command
 MIN_I_FILE = 1
@@ -49,7 +56,7 @@ MIN_I_FILE = 1
 JOB_TYPE_SLURM = 'slurm'
 JOB_TYPE_SGE = 'sge'
 VALID_JOB_TYPES = [JOB_TYPE_SLURM, JOB_TYPE_SGE]
-DEFAULT_JOB_MEMORY = '12G'
+DEFAULT_JOB_MEMORY = '16G'
 DEFAULT_JOB_TIME = '0:20:00'
 VARNAME_I_FILE = 'I_FILE'
 BINDPATH_SCRIPTS = '/mnt/scripts'
@@ -88,13 +95,14 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
         return_type='filename',
     )
 
-    helper.echo(f'Found {len(fpaths_t1)} T1 files')
+    helper.print_info(f'Found {len(fpaths_t1)} T1 files')
 
     # write paths to output file
     with fpath_out.open('w') as file_out:
         for fpath_t1 in fpaths_t1:
             fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
             file_out.write(f'{fpath_t1}\n')
+        helper.print_outcome(f'Wrote BIDS paths to {fpath_out}')
 
 @cli.command()
 @click.argument('dpath_bids', callback=callback_path)
@@ -104,16 +112,13 @@ def bids_generate(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
               type=click.IntRange(min=MIN_I_FILE))
 @click.option('-r', '--range', 'i_file_range', 
               type=click.IntRange(min=MIN_I_FILE), nargs=2)
-@click.option('-j', '--job', 'job_type', envvar='JOB_TYPE',
+@click.option('--job-type', 'job_type',
               type=click.Choice(VALID_JOB_TYPES,case_sensitive=False))
-@click.option('--job-resource', envvar='JOB_RESOURCE')
-@click.option('--job-log', 'fpath_log_job', callback=callback_path,
-              default=f'{PREFIX_PIPELINE}{EXT_LOG}', 
-              envvar='FPATH_DBM_JOB_LOG')
-@click.option('-c', '--container', 'fpath_container', callback=callback_path,
-              envvar='FPATH_DBM_CONTAINER')
-@click.option('-m', '--memory', 'job_memory', default=DEFAULT_JOB_MEMORY)
-@click.option('-t', '--time', 'job_time', default=DEFAULT_JOB_TIME)
+@click.option('--job-resource')
+@click.option('--job-container', 'fpath_container', callback=callback_path)
+@click.option('--job-log-dir', 'dpath_job_log', callback=callback_path, default='.')
+@click.option('--job-memory', default=DEFAULT_JOB_MEMORY)
+@click.option('--job-time', default=DEFAULT_JOB_TIME)
 @click.option('--rename-log/--no-rename-log', default=True)
 @add_dbm_minc_options()
 @add_common_options()
@@ -127,7 +132,7 @@ def bids_run(
     i_file_range: Union[tuple, None],
     job_type: str,
     job_resource: str,
-    fpath_log_job: Path,
+    dpath_job_log: Path,
     fpath_container: Union[Path, None],
     job_memory: str,
     job_time: str,
@@ -143,16 +148,19 @@ def bids_run(
     if i_file_single is not None:
         i_file_range = (i_file_single, i_file_single)
 
+    # get the maximum possible i_file
+    max_i_file = MIN_I_FILE
+    with fpath_bids_list.open() as file_bids_list:
+        for _ in file_bids_list:
+            max_i_file += 1
+
     # get min/max of range
     if i_file_range is not None:
-        i_file_min = min(i_file_range)
-        i_file_max = max(i_file_range)
+        i_file_start = min(i_file_range)
+        i_file_stop = max(i_file_range + (max_i_file,))
     else:
-        i_file_min = MIN_I_FILE
-        with fpath_bids_list.open() as file_bids_list:
-            i_file_max = MIN_I_FILE
-            for _ in file_bids_list:
-                i_file_max += 1
+        i_file_start = MIN_I_FILE
+        i_file_stop = max_i_file
 
     # submit job array
     if job_type is not None:
@@ -195,6 +203,8 @@ def bids_run(
             f'{fpath_container}',
             ' '.join(script_command_args),
         ]
+        singularity_command = ' '.join(singularity_command_args)
+        command_list = [singularity_command]
     
         # temporary file for job submission script
         with NamedTemporaryFile('w+t') as file_tmp:
@@ -208,14 +218,32 @@ def bids_run(
 
                 job_command_args = [
                     'qsub',
-                    '-cwd',
+                    # '-cwd',
                     '-N', PREFIX_PIPELINE,
                     '-q', job_resource,
-                    '-t', f'{i_file_min}-{i_file_max}:1',
+                    '-t', f'{i_file_start}-{i_file_stop}:1',
                     '-l', f'h_vmem={job_memory}',
                     '-l', f'h_rt={job_time}',
                     '-j', 'y',
-                    '-o', fpath_log_job,
+                    '-o', f'{dpath_job_log}/$JOB_NAME-$JOB_ID-$TASK_ID{EXT_LOG}',
+                    fpath_submission_tmp,
+                ]
+
+            elif job_type == JOB_TYPE_SLURM:
+
+                varname_array_job_id = 'SLURM_ARRAY_TASK_ID'
+                varname_job_id = 'SLURM_ARRAY_JOB_ID'
+                command_list.insert(0, 'module load singularity')
+
+                job_command_args = [
+                    'sbatch',
+                    f'--account={job_resource}',
+                    f'--array={i_file_start}-{i_file_stop}:1',
+                    f'--job-name={PREFIX_PIPELINE}',
+                    f'--mem={job_memory}',
+                    f'--time={job_time}',
+                    f'--output={dpath_job_log}/%x-%j-%a{EXT_LOG}',
+                    '--open-mode=append',
                     fpath_submission_tmp,
                 ]
 
@@ -225,8 +253,8 @@ def bids_run(
                 )
 
             # job submission script
-            singularity_command = ' '.join(singularity_command_args)
             varname_command = 'COMMAND'
+            command = ' && '.join(command_list)
             submission_file_lines = [
                 '#!/bin/bash',
                 (
@@ -238,7 +266,7 @@ def bids_run(
                 f'echo "Memory: {job_memory}"',
                 f'echo "Time: {job_time}"',
                 f'{VARNAME_I_FILE}=${varname_array_job_id}',
-                f'{varname_command}="{singularity_command}"',
+                f'{varname_command}="{command}"',
                 'echo "--------------------"',
                 f'echo ${{{varname_command}}}',
                 'echo "--------------------"',
@@ -260,7 +288,8 @@ def bids_run(
             # print file
             helper.run_command(['cat', fpath_submission_tmp])
 
-            # submit
+            # make logs directory and submit job
+            helper.mkdir(dpath_job_log, exist_ok=True)
             helper.run_command(job_command_args)
     
     # otherwise run the pipeline directly
@@ -275,9 +304,9 @@ def bids_run(
 
             for i_file, line in enumerate(file_bids_list, start=MIN_I_FILE):
 
-                if i_file < i_file_min:
+                if i_file < i_file_start:
                     continue
-                if i_file > i_file_max:
+                if i_file > i_file_stop:
                     break
 
                 # remove newline
@@ -293,9 +322,15 @@ def bids_run(
                 bids_entities = parse_file_entities(fpath_t1)
                 dpath_out_bids = Path(layout_results.build_path(bids_entities)).parent
 
+                try:
+                    helper.check_dir(dpath_out_bids, exit=False)
+                except FileExistsError:
+                    helper.print_info(f'Skipping {fpath_t1}')
+                    continue
+
                 fpath_log = dpath_logs / f'{PREFIX_PIPELINE}-{i_file}{EXT_LOG}'
-                helper.echo(f'Running pipeline on T1 file {fpath_t1}')
-                helper.echo(f'\tLog: {fpath_log}')
+                helper.print_info(f'Running pipeline on T1 file {fpath_t1}')
+                helper.print_info(f'\tLog: {fpath_log}')
 
                 _run_dbm_minc(
                     fpath_nifti=fpath_t1,
@@ -308,6 +343,99 @@ def bids_run(
                     overwrite=helper.overwrite,
                     **kwargs,
                 )
+
+@cli.command()
+@click.argument('fpath_bids_list', callback=callback_path)
+@click.argument('dpath_out', callback=callback_path)
+@click.option('-s', '--step', 'step_suffix_pairs', nargs=2, multiple=True, required=True)
+@click.option('-o', '--file-out', 'fname_out', default=FNAME_STATUS)
+@click.option('-e', '--extension-t1', 'ext_t1', default=f'{EXT_NIFTI}{EXT_GZIP}')
+@add_common_options()
+@with_helper
+def check_status(helper: ScriptHelper, fpath_bids_list: Path, dpath_out: Path, 
+                 step_suffix_pairs, fname_out, ext_t1):
+
+    def get_fpath_t1(path_result, dpath_bids_root):
+        path_result = Path(path_result)
+        dpath_parent_rel = path_result.parent.relative_to(dpath_bids_root)
+        prefix = path_result.name.split('.')[0]
+        fname_raw = f'{prefix}{ext_t1}'
+        return str(dpath_parent_rel / fname_raw)
+
+    col_fpath_t1 = 'fpath_t1'
+
+    dpath_bids = dpath_out / DNAME_OUTPUT
+    fpath_out = (dpath_out / fname_out).resolve()
+
+    helper.check_file(fpath_out)
+
+    layout = BIDSLayout(dpath_bids, validate=False)
+    df_layout = layout.to_df()
+    df_layout[col_fpath_t1] = df_layout['path'].apply(
+        lambda path: get_fpath_t1(path, dpath_bids)
+    )
+
+    helper.print_info('Checking processing status for steps:')
+    for step, suffix in step_suffix_pairs:
+        helper.print_info(f'\t{step}:\t{suffix}')
+
+    t1_proc_status_all = []
+    df_t1s = pd.read_csv(fpath_bids_list, header=None, names=[col_fpath_t1])
+    n_files = len(df_t1s)
+    n_all_pass = 0
+    n_partial_pass = 0
+    n_fail = 0
+    for fpath_t1 in df_t1s[col_fpath_t1]:
+
+        t1_proc_status = layout.parse_file_entities(fpath_t1)
+        t1_proc_status[COL_PROC_PATH] = fpath_t1
+
+        df_results = df_layout.loc[df_layout[col_fpath_t1] == fpath_t1]
+        extensions = df_results['extension'].tolist()
+
+        n_steps_passed = 0
+
+        for step, suffix in step_suffix_pairs:
+
+            if suffix in extensions:
+                status = STATUS_PASS
+                n_steps_passed += 1
+            else:
+                status = STATUS_FAIL
+
+            t1_proc_status[step] = status
+        
+        if n_steps_passed == 0:
+            n_fail += 1
+        elif n_steps_passed == len(step_suffix_pairs):
+            n_all_pass += 1
+        else:
+            n_partial_pass += 1
+
+        t1_proc_status_all.append(t1_proc_status)
+
+    helper.print_info(f'{n_files} input files total:')
+    helper.print_info(f'\t{n_all_pass}\tfiles with all results available')
+    helper.print_info(f'\t{n_partial_pass}\tfiles with some results available')
+    helper.print_info(f'\t{n_fail}\tfiles with no results available')
+
+    # make df
+    df_proc_status = pd.DataFrame(t1_proc_status_all)
+
+    # reorder columns because entities are not the same for all T1 files
+    # sometimes there is an additional 'acquisition' field
+    # which gets appended to the df, but we want all entities to be before
+    # the other columns
+    cols_proc = df_proc_status.columns.to_list()
+    last_cols = [COL_PROC_PATH] + [step for step, _ in step_suffix_pairs]
+    for col in last_cols:
+        cols_proc.remove(col)
+        cols_proc.append(col)
+    df_proc_status = df_proc_status[cols_proc]
+
+    # write file
+    df_proc_status.to_csv(fpath_out, index=False, header=True)
+    helper.print_outcome(f'Wrote file to {fpath_out}', text_color='blue')
 
 @cli.command()
 @click.argument('fpath_nifti', type=str, callback=callback_path)
@@ -323,7 +451,7 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
                   dpath_templates: Path, template_prefix: str, 
                   fpath_template: Path, fpath_template_mask: Path,
                   dpath_beast_lib: Path, fpath_conf: Path, 
-                  save_all: bool, rename_log: bool, **kwargs):
+                  save_all: bool, compress_nii: bool, rename_log: bool, **kwargs):
 
     def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
         fpath_orig = Path(fpath_orig)
@@ -353,6 +481,44 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             )
         return _rename_log_callback
 
+    def copy_files_callback(helper: ScriptHelper, dpath_source: Path, 
+                            dpath_target: Path, fpath_main_results: list[Path]):
+
+        def _copy_files_callback():
+
+            # list all result files
+            helper.run_command(['ls', '-lh', dpath_source])
+
+            # copy all result files or just the main ones
+            if save_all:
+                fpaths_to_copy = dpath_source.iterdir()
+            else:
+                fpaths_to_copy = fpath_main_results
+
+            helper.mkdir(dpath_target)
+
+            for fpath_source in fpaths_to_copy:
+
+                # optionally compress nifti files
+                if compress_nii and fpath_source.suffix == EXT_NIFTI:
+                    fpath_source_gzip = Path(f'{fpath_source}{EXT_GZIP}')
+                    with fpath_source_gzip.open('wb') as file_gzip:
+                        helper.run_command(['gzip', '-c', fpath_source], stdout=file_gzip)
+                    fpath_source = fpath_source_gzip
+
+                # copy to output directory
+                helper.run_command([
+                    'cp',
+                    '-vfp', # verbose, force overwrite, preserve metadata
+                    fpath_source,
+                    dpath_target,
+                ])
+
+            # list files in output directory
+            helper.run_command(['ls', '-lh', dpath_target])
+
+        return _copy_files_callback
+
     # make sure input file exists and has valid extension
     if not fpath_nifti.exists():
         helper.print_error_and_exit(f'Nifti file not found: {fpath_nifti}')
@@ -363,143 +529,129 @@ def _run_dbm_minc(helper: ScriptHelper, fpath_nifti: Path, dpath_out: Path,
             f'Valid extensions are: {valid_file_formats}'
         )
 
-    with TemporaryDirectory() as dpath_tmp:
+    # skip if output subdirectory already exists and is not empty
+    helper.check_dir(dpath_out)
 
-        dpath_tmp = Path(dpath_tmp)
+    fpaths_main_results = []
+    helper.callback_always.append(
+        copy_files_callback(
+            helper=helper,
+            dpath_source=helper.dpath_tmp,
+            dpath_target=dpath_out,
+            fpath_main_results=fpaths_main_results,
+        )
+    )
 
-        # if zipped file, unzip
-        if fpath_nifti.suffix == EXT_GZIP:
-            fpath_raw_nii = dpath_tmp / fpath_nifti.stem # drop last suffix
-            with fpath_raw_nii.open('wb') as file_raw:
-                helper.run_command(['zcat', fpath_nifti], stdout=file_raw)
-        # else create symbolic link
-        else:
-            fpath_raw_nii = dpath_tmp / fpath_nifti.name # keep last suffix
-            helper.run_command(['ln', '-s', fpath_nifti, fpath_raw_nii])
+    # if zipped file, unzip
+    if fpath_nifti.suffix == EXT_GZIP:
+        fpath_raw_nii = helper.dpath_tmp / fpath_nifti.stem # drop last suffix
+        with fpath_raw_nii.open('wb') as file_raw:
+            helper.run_command(['zcat', fpath_nifti], stdout=file_raw)
+    # else create symbolic link
+    else:
+        fpath_raw_nii = helper.dpath_tmp / fpath_nifti.name # keep last suffix
+        helper.run_command(['ln', '-s', fpath_nifti, fpath_raw_nii])
 
-        # for renaming the logfile based on nifti file name
-        if rename_log:
-            helper.callback = rename_log_callback(
-                helper, 
-                f'{fpath_raw_nii.stem}{EXT_LOG}',
+    # for renaming the logfile based on nifti file name
+    if rename_log:
+        helper.callbacks_success.append(
+            rename_log_callback(
+                helper=helper,
+                fpath_new=f'{fpath_raw_nii.stem}{EXT_LOG}',
                 same_parent=True,
             )
-
-        # skip if output subdirectory already exists and is not empty
-        helper.check_dir(dpath_out)
-
-        # convert to minc format
-        fpath_raw = dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
-        helper.run_command(['nii2mnc', fpath_raw_nii, fpath_raw])
-
-        # denoise
-        fpath_denoised = add_suffix(fpath_raw, SUFFIX_DENOISED)
-        helper.run_command(['mincnlm', '-verbose', fpath_raw, fpath_denoised])
-
-        # normalize, scale, perform linear registration
-        fpath_norm = add_suffix(fpath_denoised, SUFFIX_NORM)
-        fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
-        helper.run_command([
-            'beast_normalize',
-            '-modeldir', dpath_templates,
-            '-modelname', template_prefix,
-            fpath_denoised,
-            fpath_norm,
-            fpath_norm_transform,
-        ])
-
-        # get brain mask
-        fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK, sep=SUFFIX_MASK[0])
-        helper.run_command([
-            'mincbeast',
-            '-flip',
-            '-fill',
-            '-median',
-            '-same_resolution',
-            '-conf', fpath_conf,
-            '-verbose',
-            dpath_beast_lib,
-            fpath_norm,
-            fpath_mask,
-        ])
-
-        # extract brain
-        fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
-
-        # extract template brain
-        fpath_template_masked = apply_mask(
-            helper,
-            fpath_template,
-            fpath_template_mask,
-            dpath_out=dpath_tmp,
         )
 
-        # perform nonlinear registration
-        fpath_nonlinear = add_suffix(fpath_masked, SUFFIX_NONLINEAR)
-        fpath_nonlinear_transform = fpath_nonlinear.with_suffix(EXT_TRANSFORM)
-        helper.run_command([
-            'nlfit_s',
-            '-verbose',
-            '-source_mask', fpath_mask,
-            '-target_mask', fpath_template_mask,
-            fpath_masked,
-            fpath_template_masked,
-            fpath_nonlinear_transform,
-            fpath_nonlinear,
-        ])
+    # convert to minc format
+    fpath_raw = helper.dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
+    helper.run_command(['nii2mnc', fpath_raw_nii, fpath_raw])
 
-        # get DBM map (not template space)
-        fpath_dbm_tmp = add_suffix(fpath_nonlinear, SUFFIX_DBM)
-        helper.run_command([
-            'pipeline_dbm.pl',
-            '-verbose',
-            '--model', fpath_template,
-            fpath_nonlinear_transform,
-            fpath_dbm_tmp,
-        ])
+    # denoise
+    fpath_denoised = add_suffix(fpath_raw, SUFFIX_DENOISED)
+    helper.run_command(['mincnlm', '-verbose', fpath_raw, fpath_denoised])
+    fpaths_main_results.append(fpath_denoised)
 
-        # resample to template space
-        fpath_dbm = add_suffix(fpath_dbm_tmp, SUFFIX_RESAMPLED)
-        helper.run_command([
-            'mincresample',
-            '-like', fpath_template,
-            fpath_dbm_tmp,
-            fpath_dbm,
-        ])
+    # normalize, scale, perform linear registration
+    fpath_norm = add_suffix(fpath_denoised, SUFFIX_NORM)
+    fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
+    helper.run_command([
+        'beast_normalize',
+        '-modeldir', dpath_templates,
+        '-modelname', template_prefix,
+        fpath_denoised,
+        fpath_norm,
+        fpath_norm_transform,
+    ])
 
-        # apply mask
-        fpath_dbm_masked = apply_mask(helper, fpath_dbm, fpath_template_mask)
+    # get brain mask
+    fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK, sep=SUFFIX_MASK[0])
+    helper.run_command([
+        'mincbeast',
+        '-flip',
+        '-fill',
+        '-median',
+        '-same_resolution',
+        '-conf', fpath_conf,
+        '-verbose',
+        dpath_beast_lib,
+        fpath_norm,
+        fpath_mask,
+    ])
+    fpaths_main_results.append(fpath_mask)
 
-        # convert back to nifti
-        fpath_dbm_nii = fpath_dbm_masked.with_suffix(EXT_NIFTI)
-        helper.run_command(['mnc2nii', '-nii', fpath_dbm_masked, fpath_dbm_nii])
+    # extract brain
+    fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
+    fpaths_main_results.append(fpath_masked)
 
-        # list all output files
-        helper.run_command(['ls', '-lh', dpath_tmp])
+    # extract template brain
+    fpath_template_masked = apply_mask(
+        helper,
+        fpath_template,
+        fpath_template_mask,
+        dpath_out=helper.dpath_tmp,
+    )
 
-        # copy all/some result files to output directory
-        if save_all:
-            fpaths_to_copy = dpath_tmp.iterdir()
-        else:
-            fpaths_to_copy = [
-                fpath_denoised,     # denoised
-                fpath_mask,         # brain mask (after linear registration)
-                fpath_masked,       # linearly registered (masked)
-                fpath_nonlinear,    # nonlinearly registered (masked)
-                fpath_dbm_nii,      # DBM map
-            ]
+    # perform nonlinear registration
+    fpath_nonlinear = add_suffix(fpath_masked, SUFFIX_NONLINEAR)
+    fpath_nonlinear_transform = fpath_nonlinear.with_suffix(EXT_TRANSFORM)
+    helper.run_command([
+        'nlfit_s',
+        '-verbose',
+        '-source_mask', fpath_mask,
+        '-target_mask', fpath_template_mask,
+        fpath_masked,
+        fpath_template_masked,
+        fpath_nonlinear_transform,
+        fpath_nonlinear,
+    ])
+    fpaths_main_results.append(fpath_nonlinear)
 
-        helper.mkdir(dpath_out)
-        for fpath_source in fpaths_to_copy:
-            helper.run_command([
-                'cp',
-                '-vfp', # verbose, force overwrite, preserve metadata
-                fpath_source,
-                dpath_out,
-            ])
+    # get DBM map (not template space)
+    fpath_dbm_tmp = add_suffix(fpath_nonlinear, SUFFIX_DBM)
+    helper.run_command([
+        'pipeline_dbm.pl',
+        '-verbose',
+        '--model', fpath_template,
+        fpath_nonlinear_transform,
+        fpath_dbm_tmp,
+    ])
 
-        # list files in output directory
-        helper.run_command(['ls', '-lh', dpath_out])
+    # resample to template space
+    fpath_dbm = add_suffix(fpath_dbm_tmp, SUFFIX_RESAMPLED)
+    helper.run_command([
+        'mincresample',
+        '-like', fpath_template,
+        fpath_dbm_tmp,
+        fpath_dbm,
+    ])
+
+    # apply mask
+    fpath_dbm_masked = apply_mask(helper, fpath_dbm, fpath_template_mask)
+
+    # convert back to nifti
+    fpath_dbm_nii = fpath_dbm_masked.with_suffix(EXT_NIFTI)
+    helper.run_command(['mnc2nii', '-nii', fpath_dbm_masked, fpath_dbm_nii])
+    fpaths_main_results.append(fpath_dbm_nii)
 
 if __name__ == '__main__':
     cli()
