@@ -9,6 +9,9 @@ import pandas as pd
 from bids import BIDSLayout
 from bids.layout import parse_file_entities
 
+import livingpark_utils
+from livingpark_utils.zeighamietal.constants import COL_PAT_ID, COL_VISIT_TYPE
+
 from helpers import (
     add_common_options, 
     add_dbm_minc_options,
@@ -43,6 +46,9 @@ PREFIX_PIPELINE = 'dbm_minc'
 # subdirectory names
 DNAME_OUTPUT = 'output'
 DNAME_LOGS = 'logs'
+
+# for bids_filter
+FNAME_BAD_SCANS = 'bad_scans.csv'
 
 # for check_status
 FNAME_STATUS = 'proc_status.csv'
@@ -114,6 +120,115 @@ def bids_list(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
             fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
             file_out.write(f'{fpath_t1}\n')
         helper.print_outcome(f'Wrote BIDS paths to {fpath_out}')
+
+@cli.command()
+@click.argument('fpath_bids_list', callback=callback_path)
+@click.argument('fpath_cohort', callback=callback_path)
+@click.argument('fpath_out', callback=callback_path)
+@click.option('--bad-scans', 'fpath_bad_scans', callback=callback_path)
+@click.option('--subject', 'col_cohort_subject', default=COL_PAT_ID)
+@click.option('--session', 'col_cohort_session', default=COL_VISIT_TYPE)
+@add_common_options()
+@with_helper
+def bids_filter(
+    fpath_bids_list: Path, 
+    fpath_cohort: Path, 
+    fpath_out: Path,
+    fpath_bad_scans: Path,
+    col_cohort_subject: str,
+    col_cohort_session: str,
+    helper: ScriptHelper,
+    ):
+
+    session_map = {'BL': '1'}
+
+    col_fpath = 'fpath'
+    col_bids_subject = 'subject'
+    col_bids_session = 'session'
+    cols_merge = [col_bids_subject, col_bids_session]
+
+    def parse_and_add_path(path, col_path=col_fpath):
+        entities = parse_file_entities(path)
+        entities[col_path] = path
+        return entities
+
+    helper.check_file(fpath_out)
+
+    df_bids_list = pd.DataFrame([
+        parse_and_add_path(fpath)
+        for fpath
+        in pd.read_csv(fpath_bids_list, header=None).squeeze('columns').tolist()
+    ])
+    helper.print_info(f'Loaded BIDS list:\t\t{df_bids_list.shape}')
+
+    df_cohort = pd.read_csv(fpath_cohort)
+    cohort_id_original = livingpark_utils.dataset.ppmi.cohort_id(df_cohort)
+    helper.print_info(f'Loaded cohort info:\t\t{df_cohort.shape} (ID={cohort_id_original})')
+
+    df_cohort[col_bids_subject] = df_cohort[col_cohort_subject].astype(str)
+    df_cohort[col_bids_session] = df_cohort[col_cohort_session].map(session_map)
+    if pd.isna(df_cohort[col_bids_session]).any():
+        raise RuntimeError(f'Conversion with map {session_map} failed for some rows')
+
+    subjects_all = set(df_bids_list[col_bids_subject])
+    subjects_cohort = set(df_cohort[col_bids_subject])
+    subjects_diff = subjects_cohort - subjects_all
+    if len(subjects_diff) > 0:
+        helper.echo(
+            f'{len(subjects_diff)} subjects are not in the BIDS list', 
+            text_color='yellow',
+        )
+        # helper.echo(subjects_diff, text_color='yellow')
+
+    # match by subject and ID
+    df_filtered = df_bids_list.merge(df_cohort, on=cols_merge, how='inner')
+    helper.print_info(f'Filtered BIDS list:\t\t{df_filtered.shape}')
+
+    if fpath_bad_scans is not None:
+        bad_scans = pd.read_csv(fpath_bad_scans, header=None).squeeze('columns').tolist()
+        df_filtered = df_filtered.loc[~df_filtered[col_fpath].isin(bad_scans)]
+        helper.print_info(f'Removed up to {len(bad_scans)} bad scans:\t{df_filtered.shape}')
+
+    # find duplicate scans
+    # go through json sidecar and filter by description
+    counts = df_filtered.groupby(cols_merge)[cols_merge[0]].count()
+    with_multiple = counts.loc[counts > 1]
+    
+    dfs_multiple = []
+    if len(with_multiple) > 0:
+
+        for subject, session in with_multiple.index:
+
+            df_multiple = df_filtered.loc[
+                (df_filtered[col_bids_subject] == subject) &
+                (df_filtered[col_bids_session] == session)
+            ]
+
+            dfs_multiple.append(df_multiple[col_fpath])
+
+        fpath_bad_out = Path(FNAME_BAD_SCANS)
+        while fpath_bad_out.exists():
+            fpath_bad_out = add_suffix(fpath_bad_out, suffix='_', sep=None)
+
+        pd.concat(dfs_multiple).to_csv(fpath_bad_out, header=False, index=False)
+
+        helper.print_error(
+            'Found multiple runs for a single session. '
+            f'File names written to: {fpath_bad_out}. '
+            'You need to manually check these scans, choose at most one to keep, '
+            f'delete it from {fpath_bad_out}, '
+            'then pass that file as input using --bad-scans'
+        )
+
+    # print new cohort ID
+    new_cohort_id = livingpark_utils.dataset.ppmi.cohort_id(
+        df_filtered.drop_duplicates(subset=col_cohort_subject),
+    )
+    helper.echo(f'COHORT_ID={new_cohort_id}', force_color=False)
+
+    # save
+    df_filtered[col_fpath].to_csv(fpath_out, index=False, header=False)
+    helper.print_outcome(f'Wrote filtered BIDS list to: {fpath_out}')
 
 @cli.command()
 @click.argument('dpath_bids', callback=callback_path)
@@ -499,6 +614,12 @@ def dbm_list(
     n, dbm_suffix, fname_status,
     ):
 
+    def cohort_id_from_filepaths(paths: pd.Series):
+        df_subjects = pd.DataFrame({COL_PAT_ID: paths.apply(
+            lambda path: int(parse_file_entities(path)['subject'])
+        )})
+        return livingpark_utils.dataset.ppmi.cohort_id(df_subjects)
+
     if dbm_suffix is None:
         dbm_suffix_components = [
             SUFFIX_DENOISED, SUFFIX_NORM, SUFFIX_MASKED, SUFFIX_NONLINEAR,
@@ -514,9 +635,15 @@ def dbm_list(
     helper.check_file(fpath_out)
 
     df_status = pd.read_csv(fpath_status)
+    helper.print_info(f'Loaded status file: {df_status.shape}')
+    old_cohort_id = cohort_id_from_filepaths(df_status[COL_PROC_PATH])
+    helper.print_info(f'\tCohort ID: {old_cohort_id}')
+
+    # only select scans that passed all steps
     df_status_pass = df_status.loc[df_status[COL_SUMMARY] == STATUS_ALL_PASS]
 
     if n is not None:
+        helper.print_info(f'Selecting top {n} files')
         df_status_pass = df_status_pass.iloc[:n]
 
     helper.print_info(f'Selected {len(df_status_pass)} files')
@@ -524,6 +651,10 @@ def dbm_list(
     dbm_list = df_status_pass[COL_PROC_PATH].apply(
         lambda p: p.split('.')[0] + dbm_suffix
     )
+
+    # print (possibly new) cohort ID
+    new_cohort_id = cohort_id_from_filepaths(dbm_list)
+    helper.echo(f'COHORT_ID={new_cohort_id}', force_color=False)
 
     dbm_list.to_csv(fpath_out, header=False, index=False)
 

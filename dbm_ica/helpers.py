@@ -278,7 +278,7 @@ class ScriptHelper():
     def verbose(self):
         return self.verbosity > 0
 
-    def echo(self, message='', prefix='', text_color=None, color_prefix_only=False):
+    def echo(self, message='', prefix='', text_color=None, color_prefix_only=False, force_color=True):
         """
         Print a message and newline to stdout or a file, similar to click.echo() 
         but with some color processing.
@@ -301,7 +301,7 @@ class ScriptHelper():
         else:
             text = click.style(f'{prefix}{message}', fg=text_color)
 
-        click.echo(text, color=True, file=self.file_log)
+        click.echo(text, color=force_color, file=self.file_log)
 
     def print_separation(self, symbol='-', length=20):
         self.echo(symbol * length)

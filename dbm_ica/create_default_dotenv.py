@@ -4,7 +4,7 @@ from pathlib import Path
 import click
 from helpers import add_common_options, add_suffix, callback_path, ScriptHelper, with_helper
 
-FNAME_CONTAINER = 'nd-minc_1_9_16-fsl_5_0_11-click_pandas_pybids.sif'
+FNAME_CONTAINER = 'nd-minc_1_9_16-fsl_5_0_11-click_livingpark_pandas_pybids.sif'
 
 FNAME_BIDS_LIST = 'bids_list.txt'
 FNAME_DBM_LIST = 'dbm_list.txt'

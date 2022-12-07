@@ -16,6 +16,7 @@ __pycache__
 
 # DBM-ICA output files
 out*
+bad_scans*.csv
 
 # container images
 *.sif
