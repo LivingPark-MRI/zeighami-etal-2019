@@ -1,4 +1,34 @@
+# macOS system files
 .DS_Store
+
+# Python
+__pycache__
+
+# from livingpark-utils
 .ppmi_config
 .cache
-install.log
+
+# log files
+*.log
+
+# environment variables
+.env
+
+# DBM-ICA output files
+out*
+bad_scans*.csv
+
+# container images
+*.sif
+*.simg
+
+# old/unused code/notes
+ignore
+
+# MRI files
+*.nii
+*.mnc
+*.xfm
+
+# subject ID lists
+zeighami-etal-2019-cohort-*.csv

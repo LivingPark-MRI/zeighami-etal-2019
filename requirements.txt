@@ -1,3 +1,6 @@
 livingpark-utils
+nibabel
+nilearn
 numpy
 pandas
+scipy
