@@ -79,7 +79,7 @@ N_THREADS_JOBS = 4
 # for ICA command
 PREFIX_DBM_MERGED = 'dbm_merged'
 DNAME_MELODIC_RESULTS = 'melodic_results'
-ICA_RES = 4.0
+ICA_RES = 2.0
 
 @click.group()
 def cli():
@@ -665,26 +665,26 @@ def dbm_list(
 @click.argument('dpath_dbm', callback=callback_path)
 @click.argument('dpath_out', callback=callback_path)
 @click.option('--symlink/--no-symlink', default=False)
-@click.option('--threshold', type=float, default=0)
+@click.option('--threshold', type=float, default=3)
 @click.option('--resample', 'resample_resolution', type=float, default=ICA_RES)
-@click.option('-d', '--dim', type=int, help='Number of PCA components')
-@click.option('-n', '--n-components', type=int, help='Number of ICA components')
+@click.option('--dim', type=int, help='Number of PCA components')
+@click.option('--dimest', 'dim_est_method', help='Dimensionality estimation method',
+              type=click.Choice(['lap', 'bic', 'mdl', 'aic', 'mean']))
 @add_common_options()
 @with_helper
-def ica(helper: ScriptHelper, fpath_filenames: Path, dpath_dbm: Path, 
-        dpath_out: Path, threshold, symlink, resample_resolution, dim, n_components, 
-        **kwargs):
+def ica(helper: ScriptHelper, fpath_filenames: Path, dpath_dbm: Path, dpath_out: Path, 
+        threshold, symlink, resample_resolution, dim, dim_est_method, **kwargs):
 
     dpath_tmp = helper.dpath_tmp
-    dpath_results = dpath_out / DNAME_OUTPUT
-    dpath_melodic_results = dpath_results / DNAME_MELODIC_RESULTS
+    dpath_melodic_results = dpath_out / DNAME_MELODIC_RESULTS
     dpath_dbm_bids = dpath_dbm / DNAME_OUTPUT
 
-    helper.check_dir(dpath_results, prefix=PREFIX_DBM_MERGED)
-    helper.mkdir(dpath_results, exist_ok=True)
+    helper.check_dir(dpath_out, prefix=PREFIX_DBM_MERGED)
+    helper.mkdir(dpath_out, exist_ok=True)
 
     # read files and make symlinks (if needed)
     fpaths_nii_tmp = []
+    subjects = []
     with fpath_filenames.open('r') as file_filenames:
 
         for line in file_filenames:
@@ -696,6 +696,8 @@ def ica(helper: ScriptHelper, fpath_filenames: Path, dpath_dbm: Path,
             fpath_nii = dpath_dbm_bids / line
             if not fpath_nii.exists():
                 helper.print_error(f'File not found: {fpath_nii}')
+
+            subjects.append(parse_file_entities(fpath_nii)['subject'])
 
             if symlink:
                 fpath_nii_tmp = dpath_tmp / fpath_nii.name
@@ -710,18 +712,19 @@ def ica(helper: ScriptHelper, fpath_filenames: Path, dpath_dbm: Path,
 
     # merge into a single nifti file
     # concatenate in 4th (time) dimension
-    fpath_merged = dpath_results / f'{PREFIX_DBM_MERGED}{EXT_NIFTI}{EXT_GZIP}'
+    fpath_merged = dpath_tmp / f'{PREFIX_DBM_MERGED}{EXT_NIFTI}{EXT_GZIP}'
     helper.run_command(['fslmerge', '-t', fpath_merged] + fpaths_nii_tmp)
     
     # check image dimensions
     helper.run_command(['fslinfo', fpath_merged])
 
     # downsample
-    fpath_resampled = add_suffix(
-        fpath_merged, 
+    fname_resampled = add_suffix(
+        fpath_merged.name, 
         SUFFIX_RESAMPLED, 
         ext=''.join(fpath_merged.suffixes)
     )
+    fpath_resampled = dpath_out / fname_resampled
     helper.run_command([
         'flirt', 
         '-in', fpath_merged, 
@@ -736,23 +739,70 @@ def ica(helper: ScriptHelper, fpath_filenames: Path, dpath_dbm: Path,
     helper.run_command(['fslinfo', fpath_resampled])
 
     # melodic options
-    n_components_flag = '' if (n_components is None) else f'--numICs={n_components}'
     dim_flag = '' if (dim is None) else f'--dim={dim}'
+    dimest_flag = '' if (dim_est_method is None) else f'--dimest={dim_est_method}'
 
     helper.run_command([
         'melodic',
         '-i', fpath_resampled,
         '-o', dpath_melodic_results,
         dim_flag,           # number of principal components
-        n_components_flag,  # number of independent components
-        f'--mmthresh={threshold}',     # threshold for z-statistic map
+        dimest_flag,        # dimensionality reduction method
         # '--nobet',          # without brain extraction
         '--Oall',           # output everything
+        # '--Ostat',          # thresholded z-statistic maps
+        # '--Oorig',          # original ICs (before z-stat)
         '--report',         # create HTML report
         '-v',               # verbose
     ])
 
-    helper.run_command(['ls', '-lh', dpath_results])
+    fpath_ICs = dpath_melodic_results / 'melodic_IC.nii.gz'
+    if not fpath_ICs.exists():
+        helper.print_error(f'Cannot find ICA file: {fpath_ICs}')
+
+    fpath_masks = dpath_out / 'ICA_masks.nii.gz'
+    helper.run_command([
+        'fslmaths',
+        fpath_ICs,
+        '-thr', threshold,  # set everything below threshold to 0
+        '-bin',             # set everything above 0 to 1
+        fpath_masks,
+    ])
+
+    # split merged file into individual subject DBM maps (resampled)
+    prefix_mask = 'IC_mask'
+    dpath_IC_masks =  dpath_out / 'ICA_masks'
+    helper.mkdir(dpath_IC_masks)
+    helper.run_command(['fslsplit', fpath_masks, dpath_IC_masks / prefix_mask])
+
+    # find all of the split files
+    fpaths_split_mask = list(dpath_IC_masks.glob('*'))
+    fpaths_split_mask.sort()
+
+    scores_all = {}
+    for i_mask, fpath_mask in enumerate(fpaths_split_mask):
+
+        # fpath_ts = dpath_tmp / f'ts{subject}.txt'
+        fpath_dbm_ica = dpath_tmp / f'dbm_IC{i_mask}.txt'
+        helper.run_command([
+            'fslmeants',
+            '-i', fpath_resampled,  # 4D: X, Y, Z, subject
+            '-m', fpath_mask,       # 3D: X, Y, Z
+            '-o', fpath_dbm_ica,    # averages over X/Y/Z for each subject
+        ])
+
+        scores = []
+        with open(fpath_dbm_ica, 'rt') as file_ts:
+            for line in file_ts:
+                scores.append(float(line.strip()))
+        scores_all[f'IC{i_mask+1}'] = scores
+
+    df_scores = pd.DataFrame(data=scores_all, index=subjects)
+    helper.print_info(f'df_scores: {df_scores.shape}')
+    fpath_scores = dpath_out / 'scores.csv'
+    df_scores.to_csv(fpath_scores, header=True, index=True)
+
+    helper.run_command(['ls', '-lh', dpath_out])
 
 @with_helper
 @check_dbm_inputs

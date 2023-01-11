@@ -42,6 +42,7 @@ def add_suffix(
     ext: Union[str, None] = None,
 ) -> Path:
 
+    path = Path(path)
     if sep is not None:
         if suffix.startswith(sep):
             suffix = suffix[len(sep):]
@@ -51,7 +52,6 @@ def add_suffix(
     if ext is not None:
         stem = str(path).removesuffix(ext)
     else:
-        path = Path(path)
         stem = path.stem
         ext = path.suffix
 
