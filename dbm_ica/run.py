@@ -963,12 +963,6 @@ def _run_dbm_minc(
                         )
                     fpath_source = fpath_source_gzip
 
-                # fpath_target = dpath_target / fpath_source.name
-                # if fpath_target.exists():
-                #     # dpath_old = dpath_target / 'old'
-                #     helper.mkdir(dpath_old, exist_ok=True)
-                #     helper.run_command(['cp', '-vfp', fpath_target, dpath_old])
-
                 # copy to output directory
                 helper.run_command(
                     [
@@ -984,18 +978,18 @@ def _run_dbm_minc(
 
         return _copy_files_callback
 
-    # # make sure input file exists and has valid extension
-    # if not fpath_nifti.exists():
-    #     helper.print_error(f"Nifti file not found: {fpath_nifti}")
-    # valid_file_formats = (EXT_NIFTI, f"{EXT_NIFTI}{EXT_GZIP}")
-    # if not str(fpath_nifti).endswith(valid_file_formats):
-    #     helper.print_error(
-    #         f"Invalid file format for {fpath_nifti}. "
-    #         f"Valid extensions are: {valid_file_formats}"
-    #     )
+    # make sure input file exists and has valid extension
+    if not fpath_nifti.exists():
+        helper.print_error(f"Nifti file not found: {fpath_nifti}")
+    valid_file_formats = (EXT_NIFTI, f"{EXT_NIFTI}{EXT_GZIP}")
+    if not str(fpath_nifti).endswith(valid_file_formats):
+        helper.print_error(
+            f"Invalid file format for {fpath_nifti}. "
+            f"Valid extensions are: {valid_file_formats}"
+        )
 
-    # # skip if output subdirectory already exists and is not empty
-    # helper.check_dir(dpath_out, prefix=fpath_nifti.name.split(".")[0])
+    # skip if output subdirectory already exists and is not empty
+    helper.check_dir(dpath_out, prefix=fpath_nifti.name.split(".")[0])
 
     fpaths_main_results = []
     helper.callbacks_always.append(
@@ -1006,16 +1000,6 @@ def _run_dbm_minc(
             fpath_main_results=fpaths_main_results,
         )
     )
-
-    # TODO remove
-    dpath_old = dpath_out / 'old'
-    for fpath in dpath_out.iterdir():
-        if fpath.is_file():
-            if fpath.name.endswith('.denoised.mnc') or fpath.name.endswith('.denoised.norm_lr.masked.mnc') or fpath.name.endswith('.denoised.norm_lr_mask.mnc'):
-                helper.run_command(['cp', '-vfp', fpath, helper.dpath_tmp])
-            else:
-                helper.mkdir(dpath_old, exist_ok=True)
-                helper.run_command(['mv', '-vf', fpath, dpath_old])
 
     # if zipped file, unzip
     if fpath_nifti.suffix == EXT_GZIP:
@@ -1037,54 +1021,54 @@ def _run_dbm_minc(
             )
         )
 
-    # # convert to minc format
+    # convert to minc format
     fpath_raw = helper.dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
-    # helper.run_command(["nii2mnc", fpath_raw_nii, fpath_raw])
+    helper.run_command(["nii2mnc", fpath_raw_nii, fpath_raw])
 
-    # # denoise
+    # denoise
     fpath_denoised = add_suffix(fpath_raw, SUFFIX_DENOISED)
-    # helper.run_command(["mincnlm", "-verbose", fpath_raw, fpath_denoised])
-    # fpaths_main_results.append(fpath_denoised)
+    helper.run_command(["mincnlm", "-verbose", fpath_raw, fpath_denoised])
+    fpaths_main_results.append(fpath_denoised)
 
-    # # normalize, scale, perform linear registration
+    # normalize, scale, perform linear registration
     fpath_norm = add_suffix(fpath_denoised, SUFFIX_NORM)
-    # fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
-    # helper.run_command(
-    #     [
-    #         "beast_normalize",
-    #         "-modeldir",
-    #         dpath_templates,
-    #         "-modelname",
-    #         template_prefix,
-    #         fpath_denoised,
-    #         fpath_norm,
-    #         fpath_norm_transform,
-    #     ]
-    # )
+    fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
+    helper.run_command(
+        [
+            "beast_normalize",
+            "-modeldir",
+            dpath_templates,
+            "-modelname",
+            template_prefix,
+            fpath_denoised,
+            fpath_norm,
+            fpath_norm_transform,
+        ]
+    )
 
-    # # get brain mask
+    # get brain mask
     fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK, sep=SUFFIX_MASK[0])
-    # helper.run_command(
-    #     [
-    #         "mincbeast",
-    #         "-flip",
-    #         "-fill",
-    #         "-median",
-    #         "-same_resolution",
-    #         "-conf",
-    #         fpath_conf,
-    #         "-verbose",
-    #         dpath_beast_lib,
-    #         fpath_norm,
-    #         fpath_mask,
-    #     ]
-    # )
-    # fpaths_main_results.append(fpath_mask)
+    helper.run_command(
+        [
+            "mincbeast",
+            "-flip",
+            "-fill",
+            "-median",
+            "-same_resolution",
+            "-conf",
+            fpath_conf,
+            "-verbose",
+            dpath_beast_lib,
+            fpath_norm,
+            fpath_mask,
+        ]
+    )
+    fpaths_main_results.append(fpath_mask)
 
     # extract brain
     fpath_masked = add_suffix(fpath_norm, SUFFIX_MASKED)
-    # fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
-    # fpaths_main_results.append(fpath_masked)
+    fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
+    fpaths_main_results.append(fpath_masked)
 
     # extract template brain
     fpath_template_masked = apply_mask(
@@ -1149,18 +1133,6 @@ def _run_dbm_minc(
             fpath_template_mask_resampled,
         ]
     )
-
-    # # resample to template space
-    # fpath_dbm = add_suffix(fpath_dbm_tmp, SUFFIX_RESAMPLED)
-    # helper.run_command(
-    #     [
-    #         "mincresample",
-    #         "-like",
-    #         fpath_template,
-    #         fpath_dbm_tmp,
-    #         fpath_dbm,
-    #     ]
-    # )
 
     # apply mask
     fpath_dbm_masked = apply_mask(helper, fpath_dbm_reshaped, fpath_template_mask_resampled)
