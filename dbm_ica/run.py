@@ -38,6 +38,7 @@ SUFFIX_MASK = "_mask"  # binary mask
 SUFFIX_MASKED = "masked"  # masked brain
 SUFFIX_NONLINEAR = "nlr"
 SUFFIX_DBM = "dbm"
+SUFFIX_RESHAPED = 'reshaped'
 SUFFIX_RESAMPLED = "resampled"
 
 EXT_LOG = ".log"
@@ -74,7 +75,7 @@ BINDPATH_SCRIPTS = "/mnt/scripts"
 BINDPATH_BIDS_DATA = "/mnt/bids"
 BINDPATH_OUT = "/mnt/out"
 BINDPATH_BIDS_LIST = "/mnt/bids_list"
-N_THREADS_JOBS = 4
+N_THREADS_JOBS = 1#4
 
 # for ICA command
 PREFIX_DBM_MERGED = "dbm_merged"
@@ -281,7 +282,7 @@ def dbm_from_bids(
 ):
 
     # make output directory now
-    # need to mount it when running containing
+    # need to mount it when running container
     helper.mkdir(dpath_out, exist_ok=True)
 
     # convert to range
@@ -664,7 +665,7 @@ def dbm_list(
             SUFFIX_MASKED,
             SUFFIX_NONLINEAR,
             SUFFIX_DBM,
-            SUFFIX_RESAMPLED,
+            SUFFIX_RESHAPED,
             SUFFIX_MASKED,
         ]
         dbm_suffix = (
@@ -771,36 +772,36 @@ def ica(
 
     # merge into a single nifti file
     # concatenate in 4th (time) dimension
-    fpath_merged = dpath_tmp / f"{PREFIX_DBM_MERGED}{EXT_NIFTI}{EXT_GZIP}"
+    fpath_merged = dpath_out / f"{PREFIX_DBM_MERGED}{EXT_NIFTI}{EXT_GZIP}"
     helper.run_command(["fslmerge", "-t", fpath_merged] + fpaths_nii_tmp)
 
     # check image dimensions
     helper.run_command(["fslinfo", fpath_merged])
 
-    # downsample
-    fname_resampled = add_suffix(
-        fpath_merged.name, SUFFIX_RESAMPLED, ext="".join(fpath_merged.suffixes)
-    )
-    fpath_resampled = dpath_out / fname_resampled
-    helper.run_command(
-        [
-            "flirt",
-            "-in",
-            fpath_merged,
-            "-ref",
-            fpath_merged,
-            "-applyisoxfm",
-            resample_resolution,
-            "-nosearch",
-            "-verbose",
-            1,
-            "-out",
-            fpath_resampled,
-        ]
-    )
+    # # downsample
+    # fname_resampled = add_suffix(
+    #     fpath_merged.name, SUFFIX_RESAMPLED, ext="".join(fpath_merged.suffixes)
+    # )
+    # fpath_resampled = dpath_out / fname_resampled
+    # helper.run_command(
+    #     [
+    #         "flirt",
+    #         "-in",
+    #         fpath_merged,
+    #         "-ref",
+    #         fpath_merged,
+    #         "-applyisoxfm",
+    #         resample_resolution,
+    #         "-nosearch",
+    #         "-verbose",
+    #         1,
+    #         "-out",
+    #         fpath_resampled,
+    #     ]
+    # )
 
     # check image dimensions
-    helper.run_command(["fslinfo", fpath_resampled])
+    helper.run_command(["fslinfo", fpath_merged])
 
     # melodic options
     dim_flag = "" if (dim is None) else f"--dim={dim}"
@@ -810,7 +811,7 @@ def ica(
         [
             "melodic",
             "-i",
-            fpath_resampled,
+            fpath_merged,
             "-o",
             dpath_melodic_results,
             dim_flag,  # number of principal components
@@ -840,7 +841,7 @@ def ica(
         ]
     )
 
-    # split merged file into individual subject DBM maps (resampled)
+    # split merged file into component masks
     prefix_mask = "IC_mask"
     dpath_IC_masks = dpath_out / "ICA_masks"
     helper.mkdir(dpath_IC_masks)
@@ -859,7 +860,7 @@ def ica(
             [
                 "fslmeants",
                 "-i",
-                fpath_resampled,  # 4D: X, Y, Z, subject
+                fpath_merged,  # 4D: X, Y, Z, subject
                 "-m",
                 fpath_mask,  # 3D: X, Y, Z
                 "-o",
@@ -898,23 +899,24 @@ def _run_dbm_minc(
     rename_log: bool,
     **kwargs,
 ):
-    def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None):
+    def apply_mask(helper: ScriptHelper, fpath_orig, fpath_mask, dpath_out=None, dry_run=False):
         fpath_orig = Path(fpath_orig)
         if dpath_out is None:
             dpath_out = fpath_orig.parent
         dpath_out = Path(dpath_out)
         fpath_out = add_suffix(dpath_out / fpath_orig.name, SUFFIX_MASKED)
-        helper.run_command(
-            [
-                "minccalc",
-                "-verbose",
-                "-expression",
-                "A[0]*A[1]",
-                fpath_orig,
-                fpath_mask,
-                fpath_out,
-            ]
-        )
+        if not dry_run:
+            helper.run_command(
+                [
+                    "minccalc",
+                    "-verbose",
+                    "-expression",
+                    "A[0]*A[1]",
+                    fpath_orig,
+                    fpath_mask,
+                    fpath_out,
+                ]
+            )
         return fpath_out
 
     def rename_log_callback(helper: ScriptHelper, fpath_new, same_parent=True):
@@ -961,6 +963,12 @@ def _run_dbm_minc(
                         )
                     fpath_source = fpath_source_gzip
 
+                # fpath_target = dpath_target / fpath_source.name
+                # if fpath_target.exists():
+                #     # dpath_old = dpath_target / 'old'
+                #     helper.mkdir(dpath_old, exist_ok=True)
+                #     helper.run_command(['cp', '-vfp', fpath_target, dpath_old])
+
                 # copy to output directory
                 helper.run_command(
                     [
@@ -976,18 +984,18 @@ def _run_dbm_minc(
 
         return _copy_files_callback
 
-    # make sure input file exists and has valid extension
-    if not fpath_nifti.exists():
-        helper.print_error(f"Nifti file not found: {fpath_nifti}")
-    valid_file_formats = (EXT_NIFTI, f"{EXT_NIFTI}{EXT_GZIP}")
-    if not str(fpath_nifti).endswith(valid_file_formats):
-        helper.print_error(
-            f"Invalid file format for {fpath_nifti}. "
-            f"Valid extensions are: {valid_file_formats}"
-        )
+    # # make sure input file exists and has valid extension
+    # if not fpath_nifti.exists():
+    #     helper.print_error(f"Nifti file not found: {fpath_nifti}")
+    # valid_file_formats = (EXT_NIFTI, f"{EXT_NIFTI}{EXT_GZIP}")
+    # if not str(fpath_nifti).endswith(valid_file_formats):
+    #     helper.print_error(
+    #         f"Invalid file format for {fpath_nifti}. "
+    #         f"Valid extensions are: {valid_file_formats}"
+    #     )
 
-    # skip if output subdirectory already exists and is not empty
-    helper.check_dir(dpath_out, prefix=fpath_nifti.name.split(".")[0])
+    # # skip if output subdirectory already exists and is not empty
+    # helper.check_dir(dpath_out, prefix=fpath_nifti.name.split(".")[0])
 
     fpaths_main_results = []
     helper.callbacks_always.append(
@@ -998,6 +1006,16 @@ def _run_dbm_minc(
             fpath_main_results=fpaths_main_results,
         )
     )
+
+    # TODO remove
+    dpath_old = dpath_out / 'old'
+    for fpath in dpath_out.iterdir():
+        if fpath.is_file():
+            if fpath.name.endswith('.denoised.mnc') or fpath.name.endswith('.denoised.norm_lr.masked.mnc') or fpath.name.endswith('.denoised.norm_lr_mask.mnc'):
+                helper.run_command(['cp', '-vfp', fpath, helper.dpath_tmp])
+            else:
+                helper.mkdir(dpath_old, exist_ok=True)
+                helper.run_command(['mv', '-vf', fpath, dpath_old])
 
     # if zipped file, unzip
     if fpath_nifti.suffix == EXT_GZIP:
@@ -1010,7 +1028,7 @@ def _run_dbm_minc(
         helper.run_command(["ln", "-s", fpath_nifti, fpath_raw_nii])
 
     # for renaming the logfile based on nifti file name
-    if rename_log:
+    if rename_log and helper.file_log is not None:
         helper.callbacks_always.append(
             rename_log_callback(
                 helper=helper,
@@ -1019,53 +1037,54 @@ def _run_dbm_minc(
             )
         )
 
-    # convert to minc format
+    # # convert to minc format
     fpath_raw = helper.dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
-    helper.run_command(["nii2mnc", fpath_raw_nii, fpath_raw])
+    # helper.run_command(["nii2mnc", fpath_raw_nii, fpath_raw])
 
-    # denoise
+    # # denoise
     fpath_denoised = add_suffix(fpath_raw, SUFFIX_DENOISED)
-    helper.run_command(["mincnlm", "-verbose", fpath_raw, fpath_denoised])
-    fpaths_main_results.append(fpath_denoised)
+    # helper.run_command(["mincnlm", "-verbose", fpath_raw, fpath_denoised])
+    # fpaths_main_results.append(fpath_denoised)
 
-    # normalize, scale, perform linear registration
+    # # normalize, scale, perform linear registration
     fpath_norm = add_suffix(fpath_denoised, SUFFIX_NORM)
-    fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
-    helper.run_command(
-        [
-            "beast_normalize",
-            "-modeldir",
-            dpath_templates,
-            "-modelname",
-            template_prefix,
-            fpath_denoised,
-            fpath_norm,
-            fpath_norm_transform,
-        ]
-    )
+    # fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
+    # helper.run_command(
+    #     [
+    #         "beast_normalize",
+    #         "-modeldir",
+    #         dpath_templates,
+    #         "-modelname",
+    #         template_prefix,
+    #         fpath_denoised,
+    #         fpath_norm,
+    #         fpath_norm_transform,
+    #     ]
+    # )
 
-    # get brain mask
+    # # get brain mask
     fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK, sep=SUFFIX_MASK[0])
-    helper.run_command(
-        [
-            "mincbeast",
-            "-flip",
-            "-fill",
-            "-median",
-            "-same_resolution",
-            "-conf",
-            fpath_conf,
-            "-verbose",
-            dpath_beast_lib,
-            fpath_norm,
-            fpath_mask,
-        ]
-    )
-    fpaths_main_results.append(fpath_mask)
+    # helper.run_command(
+    #     [
+    #         "mincbeast",
+    #         "-flip",
+    #         "-fill",
+    #         "-median",
+    #         "-same_resolution",
+    #         "-conf",
+    #         fpath_conf,
+    #         "-verbose",
+    #         dpath_beast_lib,
+    #         fpath_norm,
+    #         fpath_mask,
+    #     ]
+    # )
+    # fpaths_main_results.append(fpath_mask)
 
     # extract brain
-    fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
-    fpaths_main_results.append(fpath_masked)
+    fpath_masked = add_suffix(fpath_norm, SUFFIX_MASKED)
+    # fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
+    # fpaths_main_results.append(fpath_masked)
 
     # extract template brain
     fpath_template_masked = apply_mask(
@@ -1092,10 +1111,10 @@ def _run_dbm_minc(
             fpath_nonlinear,
         ]
     )
-    fpaths_main_results.append(fpath_nonlinear)
+    fpaths_main_results.extend([fpath_nonlinear, fpath_nonlinear_transform])
 
-    # get DBM map (not template space)
-    fpath_dbm_tmp = add_suffix(fpath_nonlinear, SUFFIX_DBM)
+    # get DBM map
+    fpath_dbm = add_suffix(fpath_nonlinear, SUFFIX_DBM)
     helper.run_command(
         [
             "pipeline_dbm.pl",
@@ -1103,24 +1122,48 @@ def _run_dbm_minc(
             "--model",
             fpath_template,
             fpath_nonlinear_transform,
-            fpath_dbm_tmp,
-        ]
-    )
-
-    # resample to template space
-    fpath_dbm = add_suffix(fpath_dbm_tmp, SUFFIX_RESAMPLED)
-    helper.run_command(
-        [
-            "mincresample",
-            "-like",
-            fpath_template,
-            fpath_dbm_tmp,
             fpath_dbm,
         ]
     )
 
+    # reshape output before converting to nii to avoid wrong affine
+    # need this otherwise nifti file has wrong affine
+    # not needed if mincresample is called before
+    fpath_dbm_reshaped = add_suffix(fpath_dbm, SUFFIX_RESHAPED)
+    helper.run_command([
+        'mincreshape',
+        '-dimorder', 'xspace,yspace,zspace',
+        fpath_dbm,
+        fpath_dbm_reshaped,
+    ])
+
+    # resample template mask to match DBM map
+    fpath_template_mask_resampled = add_suffix(fpath_template_mask, SUFFIX_RESAMPLED)
+    fpath_template_mask_resampled = fpath_dbm_reshaped.parent / fpath_template_mask_resampled.name
+    helper.run_command(
+        [
+            "mincresample",
+            "-like",
+            fpath_dbm_reshaped,
+            fpath_template_mask,
+            fpath_template_mask_resampled,
+        ]
+    )
+
+    # # resample to template space
+    # fpath_dbm = add_suffix(fpath_dbm_tmp, SUFFIX_RESAMPLED)
+    # helper.run_command(
+    #     [
+    #         "mincresample",
+    #         "-like",
+    #         fpath_template,
+    #         fpath_dbm_tmp,
+    #         fpath_dbm,
+    #     ]
+    # )
+
     # apply mask
-    fpath_dbm_masked = apply_mask(helper, fpath_dbm, fpath_template_mask)
+    fpath_dbm_masked = apply_mask(helper, fpath_dbm_reshaped, fpath_template_mask_resampled)
 
     # convert back to nifti
     fpath_dbm_nii = fpath_dbm_masked.with_suffix(EXT_NIFTI)

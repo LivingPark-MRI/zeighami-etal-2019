@@ -155,7 +155,7 @@ ${FPATH_SCRIPT} dbm-status \
 	--step lin_reg .denoised.norm_lr.masked.mnc \
 	--step lin_reg_mask .denoised.norm_lr_mask.mnc \
 	--step nonlin_reg .denoised.norm_lr.masked.nlr.mnc \
-	--step dbm_nii .denoised.norm_lr.masked.nlr.dbm.resampled.masked.nii.gz \
+	--step dbm_nii .denoised.norm_lr.masked.nlr.dbm.reshaped.masked.nii.gz \
 	--overwrite
 exit_if_error $?
 
