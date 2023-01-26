@@ -3,4 +3,5 @@ nibabel
 nilearn
 numpy
 pandas
+seaborn
 scipy
