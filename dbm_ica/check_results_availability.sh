@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # settings
-FPATH_BIDS_DEFAULT="/data/pd/ppmi/releases/PPMI-ver_T1/bids"
+DPATH_BIDS_DEFAULT="/data/pd/ppmi/releases/PPMI-ver_T1/bids"
 FNAME_DOTENV=".env"
 FNAME_DOTENV_SCRIPT="create_default_dotenv.py"
 COHORT_PREFIX="zeighami-etal-2019-cohort-"
@@ -29,7 +29,7 @@ message() {
 exit_if_error() {
 	if [ $# != 1 ]
 	then
-		echo "Not argument passed to exit_if_error"
+		echo "No argument passed to exit_if_error"
 		exit 4
 	fi
 	EXIT_CODE=$1
@@ -53,7 +53,7 @@ else
 	then
 		DPATH_BIDS=$2
 	else
-		DPATH_BIDS=$FPATH_BIDS_DEFAULT
+		DPATH_BIDS=$DPATH_BIDS_DEFAULT
 	fi
 fi
 
@@ -190,7 +190,8 @@ exit_if_error $?
 # check if ICA results exist
 # ========================================
 DIM="30"
-# DIMEST="mean" # 'lap', 'bic', 'mdl', 'aic', 'mean'
+# DIMEST="aic" # 'lap', 'bic', 'mdl', 'aic', 'mean'
+# SHUFFLE="y" # shuffles if non-empty
 SEP_SUFFIX="-"
 if [[ ! (-z $DIM || -z $DIMEST) ]]
 then
@@ -198,13 +199,18 @@ then
 elif [ ! -z $DIM ]
 then
 	DIM_FLAG="--dim $DIM"
-	DIM_SUFFIX="${SEP_SUFFIX}${DIM}"
+	ICA_SUFFIX="${SEP_SUFFIX}${DIM}"
 elif [ ! -z $DIMEST ]
 then
 	DIM_FLAG="--dimest $DIMEST"
-	DIM_SUFFIX="${SEP_SUFFIX}${DIMEST}"
+	ICA_SUFFIX="${SEP_SUFFIX}${DIMEST}"
 fi
-DPATH_ICA_RESULTS="${DPATH_OUT_ICA}/${ICA_RESULTS_PREFIX}${COHORT_ID_DBM_LIST}${DIM_SUFFIX}"
+if [ ! -z $SHUFFLE ]
+then
+	ICA_SUFFIX="${ICA_SUFFIX}_shuffle"
+	SHUFFLE_FLAG='--shuffle'
+fi
+DPATH_ICA_RESULTS="${DPATH_OUT_ICA}/${ICA_RESULTS_PREFIX}${COHORT_ID_DBM_LIST}${ICA_SUFFIX}"
 if [[ ! -d $DPATH_ICA_RESULTS || -z "$(ls -A ${DPATH_ICA_RESULTS})" ]]
 then
 	
@@ -215,6 +221,7 @@ then
 		${DPATH_OUT_DBM} \
 		${DPATH_ICA_RESULTS} \
 		${DIM_FLAG} \
+		${SHUFFLE_FLAG} \
 		--overwrite \
 		--logfile ${DPATH_ICA_RESULTS}/ica.log
 	exit_if_error $?

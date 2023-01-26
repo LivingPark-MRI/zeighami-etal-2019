@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import random
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Union
@@ -720,6 +721,7 @@ def dbm_list(
     help="Dimensionality estimation method",
     type=click.Choice(["lap", "bic", "mdl", "aic", "mean"]),
 )
+@click.option("--shuffle/--no-shuffle", default=False)
 @add_common_options()
 @with_helper
 def ica(
@@ -732,6 +734,7 @@ def ica(
     resample_resolution,
     dim,
     dim_est_method,
+    shuffle,
     **kwargs,
 ):
 
@@ -743,6 +746,7 @@ def ica(
     helper.mkdir(dpath_out, exist_ok=True)
 
     # read files and make symlinks (if needed)
+    filenames = []
     fpaths_nii_tmp = []
     subjects = []
     with fpath_filenames.open("r") as file_filenames:
@@ -753,22 +757,28 @@ def ica(
             if line == "":
                 continue
 
-            fpath_nii = dpath_dbm_bids / line
-            if not fpath_nii.exists():
-                helper.print_error(f"File not found: {fpath_nii}")
+            filenames.append(line)
 
-            subjects.append(parse_file_entities(fpath_nii)["subject"])
+    if shuffle:
+        random.shuffle(filenames)
 
-            if symlink:
-                fpath_nii_tmp = dpath_tmp / fpath_nii.name
-                helper.run_command(
-                    ["ln", "-s", fpath_nii, fpath_nii_tmp],
-                    silent=True,
-                )
-            else:
-                fpath_nii_tmp = fpath_nii
+    for filename in filenames:
+        fpath_nii = dpath_dbm_bids / filename
+        if not fpath_nii.exists():
+            helper.print_error(f"File not found: {fpath_nii}")
 
-            fpaths_nii_tmp.append(fpath_nii_tmp)
+        subjects.append(parse_file_entities(fpath_nii)["subject"])
+
+        if symlink:
+            fpath_nii_tmp = dpath_tmp / fpath_nii.name
+            helper.run_command(
+                ["ln", "-s", fpath_nii, fpath_nii_tmp],
+                silent=True,
+            )
+        else:
+            fpath_nii_tmp = fpath_nii
+
+        fpaths_nii_tmp.append(fpath_nii_tmp)
 
     # merge into a single nifti file
     # concatenate in 4th (time) dimension
