@@ -28,11 +28,15 @@ SEP_SUFFIX = "."
 SUFFIX_TEMPLATE_MASK = "_mask"  # MNI template naming convention
 ENV_VAR_DPATH_SHARE = "MNI_DATAPATH"
 DEFAULT_BEAST_CONF = "default.1mm.conf"
-DEFAULT_TEMPLATE = "mni_icbm152_t1_tal_nlin_sym_09c"
+# DEFAULT_TEMPLATE = "mni_icbm152_t1_tal_nlin_sym_09c"
+DEFAULT_TEMPLATE = "mni_icbm152_t1_tal_nlin_asym_09c"
+DEFAULT_NLR_LEVEL = 2.0
+DEFAULT_DBM_FWHM = 1.0
 DNAME_BEAST_LIB = "beast-library-1.1"
 DNAME_TEMPLATE_MAP = {
     "mni_icbm152_t1_tal_nlin_sym_09c": "icbm152_model_09c",
     "mni_icbm152_t1_tal_nlin_sym_09a": "icbm152_model_09a",
+    "mni_icbm152_t1_tal_nlin_asym_09c": "mni_icbm152_nlin_asym_09c",
 }
 
 
@@ -141,8 +145,22 @@ def add_dbm_minc_options():
         click.option(
             "--beast-conf",
             default=DEFAULT_BEAST_CONF,
-            help="Name of configuration file for mincbeast. "
-            f"Default: {DEFAULT_BEAST_CONF}.",
+            help=(
+                "Name of configuration file for mincbeast. "
+                f"Default: {DEFAULT_BEAST_CONF}."
+            ),
+        ),
+        click.option(
+            "--nlr-level",
+            type=click.FloatRange(min=0.5),
+            default=DEFAULT_NLR_LEVEL,
+            help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}",
+        ),
+        click.option(
+            "--dbm-fwhm",
+            type=float,
+            default=DEFAULT_DBM_FWHM,
+            help=f"Blurring kernel for DBM map. Default: {DEFAULT_DBM_FWHM}",
         ),
         click.option(
             "--save-all/--save-subset",
