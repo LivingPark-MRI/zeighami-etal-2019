@@ -24,6 +24,8 @@ from helpers import (
 )
 
 from helpers import (
+    DEFAULT_DBM_FWHM,
+    DEFAULT_NLR_LEVEL,
     EXT_GZIP,
     EXT_MINC,
     EXT_NIFTI,
@@ -665,8 +667,8 @@ def dbm_list(
             SUFFIX_DENOISED,
             SUFFIX_NORM,
             SUFFIX_MASKED,
-            SUFFIX_NONLINEAR,
-            SUFFIX_DBM,
+            f'{SUFFIX_NONLINEAR}_level{int(DEFAULT_NLR_LEVEL)}',
+            f'{SUFFIX_DBM}_fwhm{int(DEFAULT_DBM_FWHM)}',
             SUFFIX_RESHAPED,
             SUFFIX_MASKED,
         ]
@@ -994,6 +996,7 @@ def _run_dbm_minc(
     helper.echo(f'dbm_fwhm: {dbm_fwhm}'.upper(), text_color='red')
     helper.echo(f'nlr_level: {nlr_level}'.upper(), text_color='red')
 
+    # # NOTE BEGIN comment out if using existing result files
     # # make sure input file exists and has valid extension
     # if not fpath_nifti.exists():
     #     helper.print_error(f"Nifti file not found: {fpath_nifti}")
@@ -1003,9 +1006,10 @@ def _run_dbm_minc(
     #         f"Invalid file format for {fpath_nifti}. "
     #         f"Valid extensions are: {valid_file_formats}"
     #     )
-
+    # 
     # # skip if output subdirectory already exists and is not empty
     # helper.check_dir(dpath_out, prefix=fpath_nifti.name.split(".")[0])
+    # # NOTE END comment out if using existing result files
 
     fpaths_main_results = []
     helper.callbacks_always.append(
@@ -1017,7 +1021,7 @@ def _run_dbm_minc(
         )
     )
 
-    # TODO remove
+    # NOTE BEGIN uncomment if using existing result files
     dpath_old = dpath_out / 'old-high_blur'
     for fpath in dpath_out.iterdir():
         if fpath.is_file():
@@ -1029,6 +1033,7 @@ def _run_dbm_minc(
             else:
                 helper.mkdir(dpath_old, exist_ok=True)
                 helper.run_command(['mv', '-vf', fpath, dpath_old])
+    # NOTE END uncomment if using existing result files
 
     # if zipped file, unzip
     if fpath_nifti.suffix == EXT_GZIP:
@@ -1094,8 +1099,8 @@ def _run_dbm_minc(
     # )
     # fpaths_main_results.append(fpath_mask)
 
-    # extract brain
-    fpath_masked = add_suffix(fpath_norm, SUFFIX_MASKED)
+    # # extract brain
+    fpath_masked = apply_mask(helper, fpath_norm, fpath_mask, dry_run=True)
     # fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
     # fpaths_main_results.append(fpath_masked)
 
@@ -1148,6 +1153,7 @@ def _run_dbm_minc(
         ]
     )
 
+    # NOTE BEGIN manual DBM 
     # fpath_inverted = add_suffix(fpath_nonlinear_transform, 'inv')
     # helper.run_command([
     #     'xfm_normalize.pl', 
@@ -1177,6 +1183,7 @@ def _run_dbm_minc(
     #     fpath_inverted_reshaped,
     #     fpath_dbm,
     # ])
+    # NOTE END manual DBM
 
     # reshape output before converting to nii to avoid wrong affine
     # need this otherwise nifti file has wrong affine

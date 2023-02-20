@@ -68,11 +68,11 @@ source ${FPATH_DOTENV}
 # 		--job-resource ${JOB_RESOURCE} \
 # 		--job-container ${FPATH_CONTAINER} \
 #         --job-log-dir ${DPATH_JOB_LOGS} \
-# 		-r 322 328 \
+#         -r 114 124 \
 #         --overwrite \
 # "
 
-# ========================================
+# # ========================================
 # check DBM processing status
 # ========================================
 # main cohort: _1606091907888136448
@@ -95,8 +95,8 @@ COMMAND="
         --step denoised .denoised.mnc \
         --step lin_reg .denoised.norm_lr.masked.mnc \
         --step lin_reg_mask .denoised.norm_lr_mask.mnc \
-        --step nonlin_reg .denoised.norm_lr.masked.nlr.mnc \
-        --step dbm_nii .denoised.norm_lr.masked.nlr.dbm.reshaped.masked.nii.gz \
+        --step nonlin_reg .denoised.norm_lr.masked.nlr_level2.mnc \
+        --step dbm_nii .denoised.norm_lr.masked.nlr_level2.dbm_fwhm1.reshaped.masked.nii.gz \
         --overwrite \
 	${COPY_COMMAND} \
 "

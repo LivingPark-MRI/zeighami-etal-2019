@@ -7,6 +7,8 @@ FNAME_DOTENV_SCRIPT="create_default_dotenv.py"
 COHORT_PREFIX="zeighami-etal-2019-cohort-"
 FNAME_BAD_SCANS="bad_scans.csv"
 ICA_RESULTS_PREFIX="output-"
+NLR_LEVEL="2"
+DBM_FWHM="1"
 
 # temporary file
 FPATH_TMP=$(mktemp /tmp/check_results_availability.XXXXXX)
@@ -154,8 +156,8 @@ ${FPATH_SCRIPT} dbm-status \
 	--step denoised .denoised.mnc \
 	--step lin_reg .denoised.norm_lr.masked.mnc \
 	--step lin_reg_mask .denoised.norm_lr_mask.mnc \
-	--step nonlin_reg .denoised.norm_lr.masked.nlr.mnc \
-	--step dbm_nii .denoised.norm_lr.masked.nlr.dbm.reshaped.masked.nii.gz \
+	--step nonlin_reg .denoised.norm_lr.masked.nlr_level$NLR_LEVEL.mnc \
+	--step dbm_nii .denoised.norm_lr.masked.nlr_level$NLR_LEVEL.dbm_fwhm$DBM_FWHM.reshaped.masked.nii.gz \
 	--overwrite
 exit_if_error $?
 
@@ -190,7 +192,7 @@ exit_if_error $?
 # check if ICA results exist
 # ========================================
 DIM="30"
-# DIMEST="aic" # 'lap', 'bic', 'mdl', 'aic', 'mean'
+# DIMEST="lap" # 'lap', 'bic', 'mdl', 'aic', 'mean'
 # SHUFFLE="y" # shuffles if non-empty
 SEP_SUFFIX="-"
 if [[ ! (-z $DIM || -z $DIMEST) ]]
