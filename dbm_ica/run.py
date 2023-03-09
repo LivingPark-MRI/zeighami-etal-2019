@@ -996,20 +996,20 @@ def _run_dbm_minc(
     helper.echo(f'dbm_fwhm: {dbm_fwhm}'.upper(), text_color='red')
     helper.echo(f'nlr_level: {nlr_level}'.upper(), text_color='red')
 
-    # # NOTE BEGIN comment out if using existing result files
-    # # make sure input file exists and has valid extension
-    # if not fpath_nifti.exists():
-    #     helper.print_error(f"Nifti file not found: {fpath_nifti}")
-    # valid_file_formats = (EXT_NIFTI, f"{EXT_NIFTI}{EXT_GZIP}")
-    # if not str(fpath_nifti).endswith(valid_file_formats):
-    #     helper.print_error(
-    #         f"Invalid file format for {fpath_nifti}. "
-    #         f"Valid extensions are: {valid_file_formats}"
-    #     )
-    # 
-    # # skip if output subdirectory already exists and is not empty
-    # helper.check_dir(dpath_out, prefix=fpath_nifti.name.split(".")[0])
-    # # NOTE END comment out if using existing result files
+    # NOTE BEGIN comment out if using existing result files
+    # make sure input file exists and has valid extension
+    if not fpath_nifti.exists():
+        helper.print_error(f"Nifti file not found: {fpath_nifti}")
+    valid_file_formats = (EXT_NIFTI, f"{EXT_NIFTI}{EXT_GZIP}")
+    if not str(fpath_nifti).endswith(valid_file_formats):
+        helper.print_error(
+            f"Invalid file format for {fpath_nifti}. "
+            f"Valid extensions are: {valid_file_formats}"
+        )
+    
+    # skip if output subdirectory already exists and is not empty
+    helper.check_dir(dpath_out, prefix=fpath_nifti.name.split(".")[0])
+    # NOTE END comment out if using existing result files
 
     fpaths_main_results = []
     helper.callbacks_always.append(
@@ -1021,29 +1021,29 @@ def _run_dbm_minc(
         )
     )
 
-    # NOTE BEGIN uncomment if using existing result files
-    dpath_old = dpath_out / 'old-high_blur'
-    for fpath in dpath_out.iterdir():
-        if fpath.is_file():
-            if (fpath.name.endswith('.denoised.mnc') or 
-                fpath.name.endswith('.denoised.norm_lr.masked.mnc') or
-                fpath.name.endswith('.denoised.norm_lr_mask.mnc')):
+    # # NOTE BEGIN uncomment if using existing result files
+    # dpath_old = dpath_out / 'old-high_blur'
+    # for fpath in dpath_out.iterdir():
+    #     if fpath.is_file():
+    #         if (fpath.name.endswith('.denoised.mnc') or 
+    #             fpath.name.endswith('.denoised.norm_lr.masked.mnc') or
+    #             fpath.name.endswith('.denoised.norm_lr_mask.mnc')):
 
-                helper.run_command(['cp', '-vfp', fpath, helper.dpath_tmp])
-            else:
-                helper.mkdir(dpath_old, exist_ok=True)
-                helper.run_command(['mv', '-vf', fpath, dpath_old])
-    # NOTE END uncomment if using existing result files
+    #             helper.run_command(['cp', '-vfp', fpath, helper.dpath_tmp])
+    #         else:
+    #             helper.mkdir(dpath_old, exist_ok=True)
+    #             helper.run_command(['mv', '-vf', fpath, dpath_old])
+    # # NOTE END uncomment if using existing result files
 
     # if zipped file, unzip
     if fpath_nifti.suffix == EXT_GZIP:
         fpath_raw_nii = helper.dpath_tmp / fpath_nifti.stem  # drop last suffix
-        # with fpath_raw_nii.open("wb") as file_raw:
-        #     helper.run_command(["zcat", fpath_nifti], stdout=file_raw)
+        with fpath_raw_nii.open("wb") as file_raw:
+            helper.run_command(["zcat", fpath_nifti], stdout=file_raw)
     # else create symbolic link
     else:
         fpath_raw_nii = helper.dpath_tmp / fpath_nifti.name  # keep last suffix
-        # helper.run_command(["ln", "-s", fpath_nifti, fpath_raw_nii])
+        helper.run_command(["ln", "-s", fpath_nifti, fpath_raw_nii])
 
     # for renaming the logfile based on nifti file name
     if rename_log and helper.file_log is not None:
@@ -1055,54 +1055,54 @@ def _run_dbm_minc(
             )
         )
 
-    # # convert to minc format
+    # convert to minc format
     fpath_raw = helper.dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
-    # helper.run_command(["nii2mnc", fpath_raw_nii, fpath_raw])
+    helper.run_command(["nii2mnc", fpath_raw_nii, fpath_raw])
 
-    # # denoise
+    # denoise
     fpath_denoised = add_suffix(fpath_raw, SUFFIX_DENOISED)
-    # helper.run_command(["mincnlm", "-verbose", fpath_raw, fpath_denoised])
-    # fpaths_main_results.append(fpath_denoised)
+    helper.run_command(["mincnlm", "-verbose", fpath_raw, fpath_denoised])
+    fpaths_main_results.append(fpath_denoised)
 
-    # # normalize, scale, perform linear registration
+    # normalize, scale, perform linear registration
     fpath_norm = add_suffix(fpath_denoised, SUFFIX_NORM)
-    # fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
-    # helper.run_command(
-    #     [
-    #         "beast_normalize",
-    #         "-modeldir",
-    #         dpath_templates,
-    #         "-modelname",
-    #         template_prefix,
-    #         fpath_denoised,
-    #         fpath_norm,
-    #         fpath_norm_transform,
-    #     ]
-    # )
+    fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
+    helper.run_command(
+        [
+            "beast_normalize",
+            "-modeldir",
+            dpath_templates,
+            "-modelname",
+            template_prefix,
+            fpath_denoised,
+            fpath_norm,
+            fpath_norm_transform,
+        ]
+    )
 
-    # # get brain mask
+    # get brain mask
     fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK, sep=SUFFIX_MASK[0])
-    # helper.run_command(
-    #     [
-    #         "mincbeast",
-    #         "-flip",
-    #         "-fill",
-    #         "-median",
-    #         "-same_resolution",
-    #         "-conf",
-    #         fpath_conf,
-    #         "-verbose",
-    #         dpath_beast_lib,
-    #         fpath_norm,
-    #         fpath_mask,
-    #     ]
-    # )
-    # fpaths_main_results.append(fpath_mask)
+    helper.run_command(
+        [
+            "mincbeast",
+            "-flip",
+            "-fill",
+            "-median",
+            "-same_resolution",
+            "-conf",
+            fpath_conf,
+            "-verbose",
+            dpath_beast_lib,
+            fpath_norm,
+            fpath_mask,
+        ]
+    )
+    fpaths_main_results.append(fpath_mask)
 
-    # # extract brain
+    # extract brain
     fpath_masked = apply_mask(helper, fpath_norm, fpath_mask, dry_run=True)
-    # fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
-    # fpaths_main_results.append(fpath_masked)
+    fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
+    fpaths_main_results.append(fpath_masked)
 
     # extract template brain
     fpath_template_masked = apply_mask(
