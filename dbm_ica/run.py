@@ -34,6 +34,10 @@ from helpers import (
     SUFFIX_T1,
 )
 
+# default settings
+DEFAULT_RESET_CACHE = False
+DEFAULT_FNAME_CACHE = ".bidslayout"
+
 # output file naming for DBM pipeline
 SUFFIX_DENOISED = "denoised"
 SUFFIX_NORM = "norm_lr"
@@ -95,9 +99,13 @@ def cli():
 @cli.command()
 @click.argument("dpath_bids", type=str, callback=callback_path)
 @click.argument("fpath_out", type=str, callback=callback_path)
+@click.option("--reset-cache/--use-cache", type=bool, default=DEFAULT_RESET_CACHE,
+              help=f"Whether to overwrite the pyBIDS database file. Default: {DEFAULT_RESET_CACHE}")
+@click.option("--fname-cache", type=str, default=DEFAULT_FNAME_CACHE,
+              help=f"Name of pyBIDS database file. Default: {DEFAULT_FNAME_CACHE}")
 @add_common_options()
 @with_helper
-def bids_list(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
+def bids_list(dpath_bids: Path, fpath_out: Path, reset_cache: bool, fname_cache: str, helper: ScriptHelper):
 
     # make sure input directory exists
     if not dpath_bids.exists():
@@ -107,10 +115,12 @@ def bids_list(dpath_bids: Path, fpath_out: Path, helper: ScriptHelper):
     helper.check_file(fpath_out)
 
     # create output directory
-    helper.mkdir(fpath_out.parent, exist_ok=True)
+    dpath_out = fpath_out.parent
+    helper.mkdir(dpath_out, exist_ok=True)
 
     # create index for BIDS directory
-    bids_layout = BIDSLayout(dpath_bids)
+    fpath_cache = dpath_out / fname_cache
+    bids_layout = BIDSLayout(dpath_bids, database_path=fpath_cache, reset_database=reset_cache)
 
     # get all T1 files
     fpaths_t1 = bids_layout.get(
@@ -191,7 +201,7 @@ def bids_filter(
             f"{len(subjects_diff)} subjects are not in the BIDS list",
             text_color="yellow",
         )
-        # helper.echo(subjects_diff, text_color='yellow')
+        # helper.echo(subjects_diff, text_color='yellow') 
 
     # match by subject and ID
     df_filtered = df_bids_list.merge(df_cohort, on=cols_merge, how="inner")
