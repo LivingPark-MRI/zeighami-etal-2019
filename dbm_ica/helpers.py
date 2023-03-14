@@ -27,7 +27,7 @@ SEP_SUFFIX = "."
 
 SUFFIX_TEMPLATE_MASK = "_mask"  # MNI template naming convention
 ENV_VAR_DPATH_SHARE = "MNI_DATAPATH"
-DEFAULT_BEAST_CONF = "default.2mm.conf"
+DEFAULT_BEAST_CONF = "default.1mm.conf"
 DEFAULT_TEMPLATE = "mni_icbm152_t1_tal_nlin_sym_09c"
 # DEFAULT_TEMPLATE = "mni_icbm152_t1_tal_nlin_asym_09c"
 DEFAULT_NLR_LEVEL = 2.0
@@ -289,10 +289,8 @@ def check_dbm_inputs(func):
             helper=helper,
             dpath_templates=dpath_templates,
             template_prefix=template_prefix,
-            # fpath_template=fpath_template,
-            # fpath_template_mask=fpath_template_mask,
-            modelt1=fpath_template,
-            modelmask=fpath_template_mask,
+            fpath_template=fpath_template,
+            fpath_template_mask=fpath_template_mask,
             dpath_beast_lib=dpath_beast_lib,
             fpath_conf=fpath_conf,
             **kwargs,
@@ -413,10 +411,9 @@ class ScriptHelper:
         shell=False,
         stdout=None,
         stderr=None,
-        capture_output=False,
         silent=False,
         force=False,
-    ) -> subprocess.CompletedProcess:
+    ):
         """Run a shell command.
 
         Parameters
@@ -429,8 +426,6 @@ class ScriptHelper:
             Standard output for executed program, by default None
         stderr : file object, int, or None, optional
             Standard error for execute program, by default None
-        capture_output : bool, optional
-            If True, stdour and stderr will be captured in the returned object
         silent : bool, optional
             Whether to execute the command without printing the command or the output
         force : bool, optional
@@ -456,9 +451,8 @@ class ScriptHelper:
             if stderr is None:
                 stderr = self.file_log
             try:
-                return subprocess.run(
-                    args, check=True, shell=shell, stdout=stdout, stderr=stderr,
-                    capture_output=capture_output, text=True,
+                subprocess.run(
+                    args, check=True, shell=shell, stdout=stdout, stderr=stderr
                 )
             except subprocess.CalledProcessError as ex:
                 raise RuntimeError(
