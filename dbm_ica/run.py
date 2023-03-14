@@ -134,7 +134,7 @@ def bids_list(dpath_bids: Path, fpath_out: Path, reset_cache: bool, fname_cache:
     # write paths to output file
     with fpath_out.open("w") as file_out:
         for fpath_t1 in fpaths_t1:
-            fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
+            # fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
             file_out.write(f"{fpath_t1}\n")
         helper.print_outcome(f"Wrote BIDS paths to {fpath_out}")
 
