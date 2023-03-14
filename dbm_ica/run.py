@@ -143,9 +143,12 @@ def bids_list(dpath_bids: Path, fpath_out: Path, reset_cache: bool, fname_cache:
 @click.argument("fpath_bids_list", callback=callback_path)
 @click.argument("fpath_cohort", callback=callback_path)
 @click.argument("fpath_out", callback=callback_path)
-@click.option("--bad-scans", "fpath_bad_scans", callback=callback_path)
-@click.option("--subject", "col_cohort_subject", default=COL_PAT_ID)
-@click.option("--session", "col_cohort_session", default=COL_VISIT_TYPE)
+@click.option("--bad-scans", "fpath_bad_scans", callback=callback_path,
+              help="Path to file listing paths of T1s to ignore (e.g. cases with multiple runs)")
+@click.option("--subject", "col_cohort_subject", default=COL_PAT_ID,
+              help="Name of subject column in cohort file")
+@click.option("--session", "col_cohort_session", default=COL_VISIT_TYPE,
+              help="Name of session column in cohort file")
 @add_common_options()
 @with_helper
 def bids_filter(
