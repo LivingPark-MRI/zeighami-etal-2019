@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import random
+import re
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Union
@@ -34,14 +35,23 @@ from helpers import (
     SUFFIX_T1,
 )
 
+EXT_IMP = '.imp'
+EXT_EXP = '.exp'
+FNAME_BEAST_TEMPLATE = 'intersection_mask.mnc'
+
 # output file naming for DBM pipeline
+SUFFIX_RESHAPED = 'reshaped'
+SUFFIX_LINEAR = "lr"
 SUFFIX_DENOISED = "denoised"
-SUFFIX_NORM = "norm_lr"
+SUFFIX_NU = 'nu'
+SUFFIX_NORM = 'norm'
+SUFFIX_NOSCALE = 'noscale'
+SUFFIX_TMP = 'tmp'
+# SUFFIX_NORM = "norm_lr"
 SUFFIX_MASK = "_mask"  # binary mask
 SUFFIX_MASKED = "masked"  # masked brain
 SUFFIX_NONLINEAR = "nlr"
 SUFFIX_DBM = "dbm"
-SUFFIX_RESHAPED = 'reshaped'
 SUFFIX_RESAMPLED = "resampled"
 SUFFIX_GRID = "_grid_0"
 
@@ -903,8 +913,8 @@ def _run_dbm_minc(
     dpath_out: Path,
     dpath_templates: Path,
     template_prefix: str,
-    fpath_template: Path,
-    fpath_template_mask: Path,
+    modelt1: Path, # TODO change name in helper.py
+    modelmask: Path,
     dpath_beast_lib: Path,
     fpath_conf: Path,
     nlr_level: float,
@@ -933,6 +943,81 @@ def _run_dbm_minc(
                 ]
             )
         return fpath_out
+
+    def resample_labels(helper: ScriptHelper, fpath_input, fpath_output, 
+                        like=None, transform=None, invert=False):
+        command = ['mincresample', '-verbose', '-nearest']
+        if like is not None:
+            command.extend(['-like', like])
+        if transform is not None:
+            command.extend(['-transform', transform])
+        if invert:
+            command.extend(['-invert_transformation'])
+        command.extend([fpath_input, fpath_output])
+        helper.run_command(command)
+    
+    def resample_smooth(helper: ScriptHelper, fpath_input, fpath_output, 
+                 like=None, transform=None):
+        command = ['itk_resample', '--order', 4]
+        if like is not None:
+            command.extend(['--like', like])
+        if transform is not None:
+            command.extend(['--transform', transform])
+        command.extend([fpath_input, fpath_output])
+        helper.run_command(command)
+
+    def linear_register(helper: ScriptHelper, source, target, output_xfm, source_mask=None, target_mask=None):
+        command = ['bestlinreg_s2', '-verbose', source, target, output_xfm]
+        # if source_mask is not None: # commented out in original code...
+        #     command.extend(['-source_mask', source_mask])
+        if target_mask is not None:
+            command.extend(['-target_mask', target_mask])
+        helper.run_command(command)
+
+    def brain_extraction(helper: ScriptHelper, stxt1, fpath_beast_template,
+                         xfmt1=None, clpt1=None, ns_stxt1=None, ns_xfmt1=None):
+        # fpath_beast_input = tmpstxt1
+        tmpstxt1 = add_suffix(stxt1, SUFFIX_RESAMPLED)
+        # fpath_beast_mask = stx_mask
+        stx_mask = add_suffix(stxt1, SUFFIX_MASK, sep=SUFFIX_MASK[0])
+        # fpath_beast_mask_tmp = tmpmask
+        tmpmask = add_suffix(stx_mask, SUFFIX_TMP)
+        fpath_beast_template = dpath_beast_lib / FNAME_BEAST_TEMPLATE
+        resample_smooth(helper, stxt1, tmpstxt1, like=fpath_beast_template)
+
+        helper.run_command([
+            'mincbeast',
+            '-verbose',
+            '-median',
+            '-fill',
+            '-conf', fpath_conf,
+            '-same_resolution',
+            dpath_beast_lib,
+            tmpstxt1,
+            tmpmask,
+        ])
+
+        # resample
+        resample_labels(helper, tmpmask, stx_mask, like=stxt1)
+
+        # resample mask into subject native space
+        # fpath_input_mask = clp_mask
+        if xfmt1 is not None and clpt1 is not None:
+            clp_mask = add_suffix(clpt1, SUFFIX_MASK, SUFFIX_MASK[0])
+            resample_labels(helper, stx_mask, clp_mask, 
+                            like=clpt1, invert=True, transform=xfmt1)
+        
+            if ns_stxt1 is not None:
+                ns_stx_mask = add_suffix(ns_stxt1, SUFFIX_MASK, SUFFIX_MASK[0])
+                resample_labels(helper, clp_mask, ns_stx_mask, like=ns_stxt1, transform=ns_xfmt1)
+            else:
+                ns_stx_mask = None
+
+        else:
+            clp_mask = None
+            ns_stx_mask = None
+
+        return stx_mask, clp_mask, ns_stx_mask
 
     def rename_log_callback(helper: ScriptHelper, fpath_new, same_parent=True):
         fpath_old = Path(helper.file_log.name)
@@ -992,9 +1077,6 @@ def _run_dbm_minc(
             helper.run_command(["ls", "-lh", dpath_target])
 
         return _copy_files_callback
-
-    helper.echo(f'dbm_fwhm: {dbm_fwhm}'.upper(), text_color='red')
-    helper.echo(f'nlr_level: {nlr_level}'.upper(), text_color='red')
 
     # NOTE BEGIN comment out if using existing result files
     # make sure input file exists and has valid extension
@@ -1056,135 +1138,207 @@ def _run_dbm_minc(
         )
 
     # convert to minc format
-    fpath_raw = helper.dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
-    helper.run_command(["nii2mnc", fpath_raw_nii, fpath_raw])
+    # fpath_raw = native
+    native = helper.dpath_tmp / fpath_raw_nii.with_suffix(EXT_MINC)
+    helper.run_command(["nii2mnc", fpath_raw_nii, native])
 
-    # denoise
-    fpath_denoised = add_suffix(fpath_raw, SUFFIX_DENOISED)
-    helper.run_command(["mincnlm", "-verbose", fpath_raw, fpath_denoised])
-    fpaths_main_results.append(fpath_denoised)
+    # ------------------------------
+    # T1 preprocessing
+    # ------------------------------
 
-    # normalize, scale, perform linear registration
-    fpath_norm = add_suffix(fpath_denoised, SUFFIX_NORM)
-    fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
-    helper.run_command(
-        [
-            "beast_normalize",
-            "-modeldir",
-            dpath_templates,
-            "-modelname",
-            template_prefix,
-            fpath_denoised,
-            fpath_norm,
-            fpath_norm_transform,
-        ]
-    )
-
-    # get brain mask
-    fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK, sep=SUFFIX_MASK[0])
-    helper.run_command(
-        [
-            "mincbeast",
-            "-flip",
-            "-fill",
-            "-median",
-            "-same_resolution",
-            "-conf",
-            fpath_conf,
-            "-verbose",
-            dpath_beast_lib,
-            fpath_norm,
-            fpath_mask,
-        ]
-    )
-    fpaths_main_results.append(fpath_mask)
-
-    # extract brain
-    fpath_masked = apply_mask(helper, fpath_norm, fpath_mask, dry_run=True)
-    fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
-    fpaths_main_results.append(fpath_masked)
-
-    # extract template brain
-    fpath_template_masked = apply_mask(
-        helper,
-        fpath_template,
-        fpath_template_mask,
-        dpath_out=helper.dpath_tmp,
-    )
-
-    # perform nonlinear registration
-    fpath_nonlinear = add_suffix(fpath_masked, f'{SUFFIX_NONLINEAR}_level{int(nlr_level)}')
-    fpath_nonlinear_transform = fpath_nonlinear.with_suffix(EXT_TRANSFORM)
-    fpath_nonlinear_grid = add_suffix(fpath_nonlinear, SUFFIX_GRID, sep='')
-    helper.run_command(
-        [
-            "nlfit_s",
-            "-verbose",
-            "-source_mask",
-            fpath_mask,
-            "-target_mask",
-            fpath_template_mask,
-            "-level",
-            nlr_level,
-            fpath_masked,               # source.mnc
-            fpath_template_masked,      # target.mnc
-            fpath_nonlinear_transform,  # output.xfm
-            fpath_nonlinear,            # output.mnc
-        ]
-    )
-    fpaths_main_results.extend([
-        fpath_nonlinear, 
-        fpath_nonlinear_transform,
-        fpath_nonlinear_grid,
+    # reshape/normalize
+    # fpath_raw_float
+    tmpt1 = add_suffix(native, SUFFIX_RESHAPED)
+    helper.run_command([
+        "mincreshape", 
+        '-verbose',
+        '-normalize', 
+        '-float',
+        native, 
+        tmpt1, 
     ])
 
-    # get DBM map
-    fpath_dbm = add_suffix(fpath_nonlinear, f'{SUFFIX_DBM}_fwhm{int(dbm_fwhm)}')
-    helper.run_command(
-        [
-            "pipeline_dbm.pl",
-            "-verbose",
-            "--model",
-            fpath_template,
-            "--fwhm",
-            dbm_fwhm,
-            fpath_nonlinear_transform,
-            fpath_dbm,
-        ]
+    # fix file if zspacing count is irregular
+    process = helper.run_command(
+        ['mincinfo', '-attvalue', 'zspace:spacing', tmpt1],
+        capture_output=True,
+    )
+    if not helper.dry_run and 'irregular' in process.stdout:
+        helper.run_command([
+            'minc_modify_header',
+            '-sinsert',
+            'zspace:spacing=regular__',
+            tmpt1,
+        ])
+
+    # linear registration
+    # NOTE: warning because source/target masks not provided
+    #       but the IPL code doesn't include them
+    # fpath_linear_transform = stx_xfm
+    # fpath_template = modelt1
+    stx_xfm = add_suffix(native, SUFFIX_LINEAR).with_suffix(EXT_TRANSFORM)
+    linear_register(helper, tmpt1, modelt1, stx_xfm)
+
+    # resample template mask to subject space
+    # fpath_mask = tmpmask
+    tmpmask = add_suffix(native, SUFFIX_MASK, sep=SUFFIX_MASK[0])
+    # fpath_template_mask = modelmask
+    resample_labels(helper, modelmask, tmpmask, 
+                    like=tmpt1, 
+                    transform=stx_xfm, invert=True)
+    
+    # denoise
+    # fpath_denoised = tmpnlm
+    tmpnlm = add_suffix(native, SUFFIX_DENOISED)
+    helper.run_command([
+        "mincnlm", 
+        "-verbose", 
+        # '-mt', '1', # constrain number of threads
+        '-beta', '0.7',
+        tmpt1, # TODO check
+        tmpnlm,
+    ])
+
+    # intensity inhomogeneity (bias field) correction
+    # NOTE: the original pipeline calls nu_estimate followed by nu_evaluate
+    #       which is exactly what nu_correct does so we will save a step and use
+    #       nu_correct instead
+    # fpath_nu_corrected = tmpn3
+    tmpn3 = add_suffix(tmpnlm, SUFFIX_NU)
+    helper.run_command([
+        'nu_correct',
+        # '-verbose',
+        '-stop', '0.0001',
+        '-fwhm', '0.1',
+        '-normalize_field',
+        '-mask', tmpmask,
+        # '-distance', '50', # if 3T scan (?)
+        tmpnlm,
+        tmpn3,
+    ])
+
+    # fpath_exp = expfile
+    expfile = tmpn3.with_suffix(EXT_EXP)
+    # fpath_scaled = clp
+    clp = add_suffix(tmpn3, SUFFIX_NORM)
+    helper.run_command([
+        'volume_pol',
+        '--verbose',
+        '--order', 1,
+        '--expfile', expfile,
+        '--noclamp',
+        '--source_mask', tmpmask,
+        '--target_mask', modelmask,
+        tmpn3,
+        modelt1,
+    ])
+    helper.run_command([
+        'minccalc',
+        '-verbose',
+        '-expfile', expfile, # in the IPL script they read the expression
+        tmpn3,
+        clp,
+    ])
+    fpaths_main_results.append(clp)
+
+    # fpath_linear = stx_mnc
+    stx_mnc = add_suffix(clp, SUFFIX_LINEAR)
+    resample_smooth(helper, clp, stx_mnc, like=modelt1, 
+             transform=stx_xfm)
+    fpaths_main_results.append(stx_mnc)
+
+    # remove scaling from linear part of transform file
+    stx_ns_mnc = add_suffix(stx_mnc, SUFFIX_NOSCALE)#stx_ns_xfm.with_suffix(EXT_MINC) # linear_template
+    stx_ns_xfm = stx_ns_mnc.with_suffix(EXT_TRANSFORM) #add_suffix(stx_xfm, SUFFIX_NOSCALE)
+    scale = add_suffix(stx_xfm, SUFFIX_TMP)
+    unscale = add_suffix(scale, SUFFIX_NOSCALE)
+    process = helper.run_command(['xfm2param', stx_xfm], capture_output=True)
+    try:
+        # scale_params = scale__
+        scale__ = re.search('^-scale.*', process.stdout, re.M).group().split()
+    except AttributeError:
+        if helper.dry_run:
+            scale__ = ['SCALE_PARAMS']
+        else:
+            raise RuntimeError(f'Unable to extract scale parameters from {stx_xfm}')
+    helper.run_command(['param2xfm'] + scale__ + [scale])
+    helper.run_command(['xfminvert', '-verbose', scale, unscale])
+    helper.run_command(['xfmconcat', '-verbose', stx_xfm, unscale, stx_ns_xfm])
+    resample_smooth(helper, clp, stx_ns_mnc, like=modelt1, transform=stx_ns_xfm) # TODO wrong transform ??
+
+    # ------------------------------
+    # brain extraction 1
+    # ------------------------------
+    fpath_beast_template = dpath_beast_lib / FNAME_BEAST_TEMPLATE # TODO handle this in wrapper, pass as function argument
+    stx_mnc_mask, clp_mask, ns_ntx_mnc_mask = brain_extraction(
+        helper, stx_mnc, fpath_beast_template, xfmt1=stx_xfm, clpt1=clp, 
+        ns_stxt1=stx_ns_mnc, ns_xfmt1=stx_ns_xfm)
+    
+    # ------------------------------
+    # linear atlas registration
+    # ------------------------------
+    atlas = modelt1 # MNI template
+    atlas_mask = modelmask # MNI template mask
+    stx2_xfm = add_suffix(stx_ns_mnc, SUFFIX_LINEAR).with_suffix(EXT_TRANSFORM)
+    template_stx2_xfm = add_suffix(stx2_xfm, SUFFIX_TMP)
+    linear_register(
+        helper,
+        stx_ns_mnc, atlas, template_stx2_xfm, 
+        source_mask=ns_ntx_mnc_mask, 
+        target_mask=atlas_mask,
     )
 
-    # NOTE BEGIN manual DBM 
-    # fpath_inverted = add_suffix(fpath_nonlinear_transform, 'inv')
-    # helper.run_command([
-    #     'xfm_normalize.pl', 
-    #     fpath_nonlinear_transform,
-    #     '--like',
-    #     fpath_template,
-    #     '--step',
-    #     2,
-    #     fpath_inverted,
-    #     '--invert',
-    # ])
+    helper.run_command(['xfmconcat', stx_ns_xfm, template_stx2_xfm, stx2_xfm])
+    stx2_mnc = stx2_xfm.with_suffix(EXT_MINC)
+    resample_smooth(helper, clp, stx2_mnc, transform=stx2_xfm, like=atlas)
 
-    # fpath_inverted_grid = add_suffix(fpath_inverted, SUFFIX_GRID, sep='').with_suffix(EXT_MINC)
-    # fpath_inverted_reshaped = add_suffix(fpath_inverted_grid, SUFFIX_RESHAPED)
-    # helper.run_command([
-    #     'mincreshape',
-    #     '-dimorder',
-    #     'vector_dimension,xspace,yspace,zspace',
-    #     fpath_inverted_grid,
-    #     fpath_inverted_reshaped,
-    # ])
+    # ------------------------------
+    # brain extraction 2
+    # ------------------------------    
+    stx2_mnc_mask, clp2_mask, ns_stx_mask = brain_extraction(
+        helper, stx2_mnc, fpath_beast_template, 
+        xfmt1=stx2_xfm, clpt1=clp, ns_stxt1=None, ns_xfmt1=None)
+    
+    # sanity check (TODO remove)
+    if ns_stx_mask is not None:
+        raise RuntimeError(f'Expected None for ns_stx_mask, got {ns_stx_mask}')
 
-    # fpath_dbm = add_suffix(fpath_inverted_reshaped, SUFFIX_DBM)
-    # helper.run_command([
-    #     'mincblob',
-    #     '-determinant',
-    #     fpath_inverted_reshaped,
-    #     fpath_dbm,
-    # ])
-    # NOTE END manual DBM
+    # ------------------------------
+    # nonlinear registration
+    # ------------------------------
+    nl_template = stx2_mnc
+    nl_template_mask = stx2_mnc_mask
+    nl_xfm = add_suffix(stx_mnc, SUFFIX_NONLINEAR).with_suffix(EXT_TRANSFORM)
+    helper.run_command([
+        'nlfit_s', 
+        '-verbose',
+        '-level', nlr_level,
+        '-start', 32,
+        '-source_mask', nl_template_mask,
+        '-target_mask', modelmask,
+        nl_template,
+        modelt1,
+        nl_xfm,
+    ])
 
+    # ------------------------------
+    # DBM
+    # ------------------------------
+    fpath_dbm = add_suffix(nl_xfm.with_suffix(EXT_MINC), f'{SUFFIX_DBM}_fwhm{int(dbm_fwhm)}')
+    helper.run_command([
+        "pipeline_dbm.pl",
+        "-verbose",
+        "--model",
+        modelt1,
+        "--fwhm",
+        dbm_fwhm,
+        nl_xfm,
+        fpath_dbm,
+    ])
+
+    # ------------------------------
+    # Post-processing
+    # ------------------------------
     # reshape output before converting to nii to avoid wrong affine
     # need this otherwise nifti file has wrong affine
     # not needed if mincresample is called before
@@ -1197,17 +1351,15 @@ def _run_dbm_minc(
     ])
 
     # resample template mask to match DBM map
-    fpath_template_mask_resampled = add_suffix(fpath_template_mask, SUFFIX_RESAMPLED)
+    fpath_template_mask_resampled = add_suffix(modelmask, SUFFIX_RESAMPLED)
     fpath_template_mask_resampled = fpath_dbm_reshaped.parent / fpath_template_mask_resampled.name
-    helper.run_command(
-        [
-            "mincresample",
-            "-like",
-            fpath_dbm_reshaped,
-            fpath_template_mask,
-            fpath_template_mask_resampled,
-        ]
-    )
+    helper.run_command([
+        "mincresample",
+        "-like",
+        fpath_dbm_reshaped,
+        modelmask,
+        fpath_template_mask_resampled,
+    ])
 
     # apply mask
     fpath_dbm_masked = apply_mask(helper, fpath_dbm_reshaped, fpath_template_mask_resampled)
@@ -1217,6 +1369,94 @@ def _run_dbm_minc(
     helper.run_command(["mnc2nii", "-nii", fpath_dbm_masked, fpath_dbm_nii])
     fpaths_main_results.append(fpath_dbm_nii)
 
+    # # normalize, scale, perform linear registration
+    # fpath_norm = add_suffix(fpath_denoised, SUFFIX_NORM)
+    # fpath_norm_transform = fpath_norm.with_suffix(EXT_TRANSFORM)
+    # helper.run_command(
+    #     [
+    #         "beast_normalize",
+    #         "-modeldir",
+    #         dpath_templates,
+    #         "-modelname",
+    #         template_prefix,
+    #         fpath_denoised,
+    #         fpath_norm,
+    #         fpath_norm_transform,
+    #     ]
+    # )
+
+    # # get brain mask
+    # fpath_mask = add_suffix(fpath_norm, SUFFIX_MASK, sep=SUFFIX_MASK[0])
+    # helper.run_command(
+    #     [
+    #         "mincbeast",
+    #         "-flip",
+    #         "-fill",
+    #         "-median",
+    #         "-same_resolution",
+    #         "-conf",
+    #         fpath_conf,
+    #         "-verbose",
+    #         dpath_beast_lib,
+    #         fpath_norm,
+    #         fpath_mask,
+    #     ]
+    # )
+    # fpaths_main_results.append(fpath_mask)
+
+    # # extract brain
+    # fpath_masked = apply_mask(helper, fpath_norm, fpath_mask, dry_run=True)
+    # fpath_masked = apply_mask(helper, fpath_norm, fpath_mask)
+    # fpaths_main_results.append(fpath_masked)
+
+    # # extract template brain
+    # fpath_template_masked = apply_mask(
+    #     helper,
+    #     fpath_template,
+    #     fpath_template_mask,
+    #     dpath_out=helper.dpath_tmp,
+    # )
+
+    # # perform nonlinear registration
+    # fpath_nonlinear = add_suffix(fpath_masked, f'{SUFFIX_NONLINEAR}_level{int(nlr_level)}')
+    # fpath_nonlinear_transform = fpath_nonlinear.with_suffix(EXT_TRANSFORM)
+    # fpath_nonlinear_grid = add_suffix(fpath_nonlinear, SUFFIX_GRID, sep='')
+    # helper.run_command(
+    #     [
+    #         "nlfit_s",
+    #         "-verbose",
+    #         "-source_mask",
+    #         fpath_mask,
+    #         "-target_mask",
+    #         fpath_template_mask,
+    #         "-level",
+    #         nlr_level,
+    #         fpath_masked,               # source.mnc
+    #         fpath_template_masked,      # target.mnc
+    #         fpath_nonlinear_transform,  # output.xfm
+    #         fpath_nonlinear,            # output.mnc
+    #     ]
+    # )
+    # fpaths_main_results.extend([
+    #     fpath_nonlinear, 
+    #     fpath_nonlinear_transform,
+    #     fpath_nonlinear_grid,
+    # ])
+
+    # # get DBM map
+    # fpath_dbm = add_suffix(fpath_nonlinear, f'{SUFFIX_DBM}_fwhm{int(dbm_fwhm)}')
+    # helper.run_command(
+    #     [
+    #         "pipeline_dbm.pl",
+    #         "-verbose",
+    #         "--model",
+    #         modelt1,
+    #         "--fwhm",
+    #         dbm_fwhm,
+    #         fpath_nonlinear_transform,
+    #         fpath_dbm,
+    #     ]
+    # )
 
 if __name__ == "__main__":
     cli()
