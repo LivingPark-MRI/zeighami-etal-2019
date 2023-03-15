@@ -3,7 +3,7 @@ from pathlib import Path
 
 import click
 from helpers import (
-    add_common_options,
+    add_helper_options,
     add_suffix,
     callback_path,
     ScriptHelper,
@@ -34,7 +34,7 @@ DNAME_JOB_LOGS = "jobs"
     help="Job submission system and account/queue",
 )
 @click.option("-f", "--fname-dotenv", default=".env")
-@add_common_options()
+@add_helper_options()
 @with_helper
 def create_default_dotenv(
     dpath_root: Path,
