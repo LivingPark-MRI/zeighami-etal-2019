@@ -6,9 +6,6 @@ FNAME_DOTENV=".env"
 FNAME_DOTENV_SCRIPT="create_default_dotenv.py"
 COHORT_PREFIX="zeighami-etal-2019-cohort-"
 FNAME_BAD_SCANS="bad_scans.csv"
-ICA_RESULTS_PREFIX="output-"
-NLR_LEVEL="2"
-DBM_FWHM="1"
 
 # temporary file
 FPATH_TMP=$(mktemp /tmp/check_results_availability.XXXXXX)
@@ -67,8 +64,8 @@ message "COHORT_ID: $COHORT_ID"
 
 # find path to containing environment variable definitions
 FPATH_CURRENT=`realpath $0`
-DPATH_CURRENT=`dirname ${FPATH_CURRENT}`
-FPATH_DOTENV="${DPATH_CURRENT}/${FNAME_DOTENV}"
+DPATH_CURRENT=`dirname $FPATH_CURRENT`
+FPATH_DOTENV="$DPATH_CURRENT/$FNAME_DOTENV"
 
 # if env file does not exist, create it
 if [ ! -f $FPATH_DOTENV ]
@@ -76,7 +73,7 @@ then
 	echo "Did not find dotenv file. Generating default one..."
 	echo "DPATH_BIDS: $DPATH_BIDS"
 	$DPATH_CURRENT/$FNAME_DOTENV_SCRIPT \
-		.. \
+		$DPATH_CURRENT/.. \
 		$FNAME_DOTENV_SCRIPT \
 		--fname-dotenv $FPATH_DOTENV
 
@@ -86,12 +83,12 @@ then
 		exit 2
 	fi
 fi
-source ${FPATH_DOTENV}
+source $FPATH_DOTENV
 
 # ========================================
 # make sure cohort file exists
 # ========================================
-FPATH_COHORT="${DPATH_ROOT}/${COHORT_PREFIX}${COHORT_ID}.csv" # TODO use arg for this
+FPATH_COHORT="$DPATH_ROOT/$COHORT_PREFIX$COHORT_ID.csv"
 if [ ! -f $FPATH_COHORT ]
 then
 	echo "Cohort file not found: $FPATH_COHORT"
@@ -102,13 +99,13 @@ fi
 # make sure BIDS list file exists
 # TODO test this
 # ========================================
-if [ ! -f ${FPATH_BIDS_LIST_ALL} ]
+if [ ! -f $FPATH_BIDS_LIST_ALL ]
 then
-	echo "Did not find ${FPATH_BIDS_LIST_ALL}. Generating new one..."
+	echo "Did not find $FPATH_BIDS_LIST_ALL. Generating new one..."
 	
-	${FPATH_SCRIPT} bids-list \
-		${DPATH_BIDS} \
-		${FPATH_BIDS_LIST_ALL}
+	$FPATH_SCRIPT bids-list \
+		$DPATH_BIDS \
+		$FPATH_BIDS_LIST_ALL
 
 	exit_if_error $?
 fi
@@ -116,9 +113,9 @@ fi
 # ========================================
 # filter list of T1 filepaths based on cohort
 # ========================================
-FPATH_BAD_SCANS="${DPATH_ROOT}/${FNAME_BAD_SCANS}"
-DPATH_BIDS_LIST=`dirname ${FPATH_BIDS_LIST_ALL}`
-FPATH_BIDS_LIST_COHORT=${DPATH_BIDS_LIST}/bids_list-${COHORT_ID}.txt
+FPATH_BAD_SCANS="$DPATH_ROOT/$FNAME_BAD_SCANS"
+DPATH_BIDS_LIST=`dirname $FPATH_BIDS_LIST_ALL`
+FPATH_BIDS_LIST_COHORT=$DPATH_BIDS_LIST/bids_list-$COHORT_ID.txt
 
 if [ ! -f $FPATH_BAD_SCANS ]
 then
@@ -127,32 +124,36 @@ then
 fi
 
 message "BIDS-FILTER"
-${FPATH_SCRIPT} bids-filter \
-	${FPATH_BIDS_LIST_ALL} \
-	${FPATH_COHORT} \
-	${FPATH_BIDS_LIST_COHORT} \
-	--bad-scans ${FPATH_BAD_SCANS} \
-	--overwrite | tee ${FPATH_TMP}
+$FPATH_SCRIPT bids-filter \
+	$FPATH_BIDS_LIST_ALL \
+	$FPATH_COHORT \
+	$FPATH_BIDS_LIST_COHORT \
+	--bad-scans $FPATH_BAD_SCANS \
+	--overwrite | tee $FPATH_TMP
 exit_if_error $?
 
-COHORT_ID_BIDS_LIST=$(grep COHORT_ID ${FPATH_TMP} | awk -F '=' '{ print $2 }' )
+COHORT_ID_BIDS_LIST=$(grep COHORT_ID $FPATH_TMP | awk -F '=' '{ print $2 }' )
 
 if [ $COHORT_ID_BIDS_LIST != $COHORT_ID ]
 then
-	message "COHORT ID CHANGED TO ${COHORT_ID_BIDS_LIST} AFTER GENERATING BIDS LIST"
-	FPATH_BIDS_LIST_COHORT_TMP=${FPATH_BIDS_LIST_COHORT}
+	message "COHORT ID CHANGED TO $COHORT_ID_BIDS_LIST AFTER GENERATING BIDS LIST"
+	FPATH_BIDS_LIST_COHORT_TMP=$FPATH_BIDS_LIST_COHORT
 	FPATH_BIDS_LIST_COHORT=${FPATH_BIDS_LIST_COHORT/"$COHORT_ID"/"$COHORT_ID_BIDS_LIST"}
-	mv -v ${FPATH_BIDS_LIST_COHORT_TMP} ${FPATH_BIDS_LIST_COHORT}
+	mv -v $FPATH_BIDS_LIST_COHORT_TMP $FPATH_BIDS_LIST_COHORT
 	exit_if_error $?
 fi
+
+# TODO DBM post run
+
+# TODO delete missing input list
 
 # ========================================
 # check DBM processing status
 # ========================================
 message "DBM-STATUS"
-${FPATH_SCRIPT} dbm-status \
-	${FPATH_BIDS_LIST_COHORT} \
-	${DPATH_OUT_DBM} \
+$FPATH_SCRIPT dbm-status \
+	$FPATH_BIDS_LIST_COHORT \
+	$DPATH_OUT_DBM \
 	--step denoised .denoised.mnc \
 	--step lin_reg .denoised.norm_lr.masked.mnc \
 	--step lin_reg_mask .denoised.norm_lr_mask.mnc \
@@ -161,19 +162,21 @@ ${FPATH_SCRIPT} dbm-status \
 	--overwrite
 exit_if_error $?
 
+# TODO check if new missing input list was written
+
 message "COPYING"
 FPATH_PROC_STATUS_COHORT="${DPATH_OUT_DBM}/proc_status-${COHORT_ID}.csv"
-cp -v ${DPATH_OUT_DBM}/proc_status.csv ${FPATH_PROC_STATUS_COHORT}
+cp -v $DPATH_OUT_DBM/proc_status.csv $FPATH_PROC_STATUS_COHORT
 exit_if_error $?
 
 # ========================================
 # build list of filenames for ICA
 # ========================================
 message "DBM-LIST"
-${FPATH_SCRIPT} dbm-list \
-	${DPATH_OUT_DBM} \
-	${FPATH_DBM_LIST} \
-	--overwrite | tee ${FPATH_TMP}
+$FPATH_SCRIPT dbm-list \
+	$DPATH_OUT_DBM \
+	$FPATH_DBM_LIST \
+	--overwrite | tee $FPATH_TMP
 exit_if_error $?
 
 COHORT_ID_DBM_LIST=$(grep COHORT_ID ${FPATH_TMP} | awk -F '=' '{ print $2 }' ) \
@@ -184,8 +187,8 @@ then
 fi
 
 message "COPYING"
-FPATH_DBM_LIST_COHORT=${DPATH_OUT_ICA}/dbm_list-${COHORT_ID_DBM_LIST}.txt
-cp -v ${FPATH_DBM_LIST} ${FPATH_DBM_LIST_COHORT}
+FPATH_DBM_LIST_COHORT=$DPATH_OUT_ICA/dbm_list-$COHORT_ID_DBM_LIST.txt
+cp -v $FPATH_DBM_LIST $FPATH_DBM_LIST_COHORT
 exit_if_error $?
 
 # ========================================
