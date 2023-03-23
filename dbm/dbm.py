@@ -39,23 +39,36 @@ from tracker import (
 )
 
 # default settings
+DEFAULT_FNAME_ENV = ".env"
 DEFAULT_RESET_CACHE = False
 DEFAULT_FNAME_CACHE = ".bidslayout"
 DEFAULT_DNAME_INPUT = "input"
 DEFAULT_DNAME_OUTPUT = "output"
-DEFAULT_FNAME_LIST = "list.csv"
+DEFAULT_FNAME_BIDS_LIST = "bids_list-all.csv"
+DEFAULT_FNAME_BIDS_LIST_FILTERED = "bids_list.csv"
+DEFAULT_FNAME_MINC_LIST = "minc_list.csv"
 DEFAULT_FNAME_BAD_SCANS = "bad_scans.csv"
 DEFAULT_FNAME_STATUS = "status.csv"
 DEFAULT_DNAME_TAR = "tarballs"
 DEFAULT_FNAME_TAR = "dbm_results"
-DEFAULT_DPATH_MINC_PIPELINE = Path("/", "ipl", "quarantine", "experimental", "2013-02-15")
-DEFAULT_DPATH_TEMPLATE = Path("/", "ipl", "quarantine", "models", "icbm152_model_09c")
-DEFAULT_TEMPLATE = "mni_icbm152_t1_tal_nlin_sym_09c"
-DEFAULT_SGE_QUEUE = "origami.q"
 
 # BIDS entities constants
 COL_BIDS_SUBJECT = "subject"
 COL_BIDS_SESSION = "session"
+
+# init
+FNAME_CONTAINER = "nd-minc_1_9_16-fsl_5_0_11-click_livingpark_pandas_pybids.sif" # TODO remove (?)
+DNAME_MRI_CODE = "dbm"
+FNAME_MRI_CODE = "dbm.py"
+FNAME_MRI_SCRIPTS = "scripts"
+INIT_DNAME_OUT = "out"
+INIT_DNAME_OUT_DBM = "dbm"
+
+# tagged filename patterns
+PATTERN_BIDS_LIST_FILTERED = "bids_list-{}.csv"
+PATTERN_MINC_LIST = "minc_list-{}.csv"
+PATTERN_TAR = "dbm_results-{}" # without extension
+PATTERN_STATUS = "status-{}.csv"
 
 # DBM
 COMMAND_PYTHON2 = "python2"
@@ -65,16 +78,20 @@ DNAME_VBM = "vbm"
 PREFIX_DBM_FILE = "vbm_jac"
 FNAME_MASK = f"mask{EXT_MINC}"
 SUFFIX_MASKED = "masked"
+SUFFIX_TEMPLATE_MASK = "_mask" # for MNI template
 
 # DBM status
 TAG_MISSING = "missing"
+
+# tar
+FNAME_INFO = "info.csv"
 
 @click.group()
 def cli():
     return
 
 
-@cli.command()
+@cli.command() # TODO refactor arguments/options
 @click.argument("dpath_bids", type=str, callback=callback_path)
 @click.argument("fpath_out", type=str, callback=callback_path)
 @click.option("--reset-cache/--use-cache", type=bool, default=DEFAULT_RESET_CACHE,
@@ -123,7 +140,7 @@ def bids_list(
         helper.print_outcome(f"Wrote BIDS paths to {fpath_out}")
 
 
-@cli.command()
+@cli.command() # TODO refactor arguments/options
 @click.argument("fpath_bids_list", callback=callback_path)
 @click.argument("fpath_cohort", callback=callback_path)
 @click.argument("fpath_out", callback=callback_path)
@@ -244,29 +261,37 @@ def bids_filter(
 
 
 @cli.command()
-@click.argument("fpath_bids_list", callback=callback_path)
 @click.argument("dpath_dbm", callback=callback_path)
-@click.option("--minc-input-dir", "dname_input", callback=callback_path, default=DEFAULT_DNAME_INPUT)
-@click.option("--outfile", "fname_out", default=DEFAULT_FNAME_LIST)
+@click.option("--tag", help="tag to differentiate datasets (ex: cohort ID)")
+@click.option("--minc-input-dir", "dname_input", default=DEFAULT_DNAME_INPUT)
 @add_silent_option()
 @add_helper_options()
 @with_helper
 @require_minc
 def pre_run(
     helper: ScriptHelper,
-    fpath_bids_list: Path, 
     dpath_dbm: Path, 
+    tag, 
     dname_input,
-    fname_out,
     silent,
 ):
 
-    dpath_minc_files = dpath_dbm / dname_input
+    if tag is None:
+        fname_bids_list = DEFAULT_FNAME_BIDS_LIST_FILTERED
+        fname_out = DEFAULT_FNAME_MINC_LIST
+    else:
+        fname_bids_list = PATTERN_BIDS_LIST_FILTERED.format(tag)
+        fname_out = PATTERN_MINC_LIST.format(tag)
 
+    fpath_bids_list: Path = dpath_dbm / fname_bids_list
+
+    if not fpath_bids_list.exists():
+        raise FileNotFoundError()
+
+    dpath_minc_files = dpath_dbm / dname_input
+    helper.mkdir(dpath_minc_files, exist_ok=True)
     fpath_out = dpath_dbm / fname_out
     helper.check_file(fpath_out)
-
-    helper.mkdir(dpath_minc_files, exist_ok=True)
 
     data_input_list = []
     count_skipped = 0
@@ -276,10 +301,10 @@ def pre_run(
         # make sure input file exists and has valid extension
         fpath_nifti = Path(fpath_nifti)
         if not fpath_nifti.exists():
-            helper.print_error(f"Nifti file not found: {fpath_nifti}")
+            raise FileNotFoundError(f"Nifti file not found: {fpath_nifti}")
         valid_file_formats = (EXT_NIFTI, f"{EXT_NIFTI}{EXT_GZIP}")
         if not str(fpath_nifti).endswith(valid_file_formats):
-            helper.print_error(
+            raise RuntimeError(
                 f"Invalid file format for {fpath_nifti}. "
                 f"Valid extensions are: {valid_file_formats}"
             )
@@ -321,36 +346,39 @@ def pre_run(
 
 
 @cli.command()
-@click.argument("fpath_input_list", callback=callback_path)
 @click.argument("dpath_dbm", callback=callback_path)
-@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
-@click.option("--dpath-pipeline", callback=callback_path, 
-              default=DEFAULT_DPATH_MINC_PIPELINE,
-              help=f"Default: {DEFAULT_DPATH_MINC_PIPELINE}")
-@click.option("--dpath-model", "dpath_template", callback=callback_path,
-              default=DEFAULT_DPATH_TEMPLATE,
-              help=f"Default: {DEFAULT_DPATH_TEMPLATE}")
-@click.option("--model-name", "template", default=DEFAULT_TEMPLATE,
-              help=f"MNI template name. Default: {DEFAULT_TEMPLATE}")
+@click.option("--tag", help="tag to differentiate datasets (ex: cohort ID)")
+@click.option("--pipeline-dir", "dpath_pipeline", callback=callback_path, required=True,
+              help=f"Path to MINC DBM pipeline directory")
+@click.option("--template-dir", "dpath_template", callback=callback_path,
+              required=True, help=f"Path to MNI template (MINC)")
+@click.option("--template", required=True, help=f"MNI template name")
 @click.option("--sge/--no-sge", "with_sge", default=True)
-@click.option("-q", "--queue", "sge_queue", default=DEFAULT_SGE_QUEUE)
+@click.option("-q", "--queue", "sge_queue")
+@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @add_helper_options()
 @with_helper
 @require_minc
 @require_python2
 def run(
     helper: ScriptHelper,
-    fpath_input_list,
-    dpath_dbm,
+    dpath_dbm: Path,
+    tag,
     dname_output,
-    dpath_pipeline,
-    dpath_template,
+    dpath_pipeline: Path,
+    dpath_template: Path,
     template,
     with_sge,
     sge_queue,
 ):
 
     dname_nihpd = "nihpd_pipeline"
+
+    if tag is None:
+        fname_input_list = DEFAULT_FNAME_MINC_LIST
+    else:
+        fname_input_list = PATTERN_MINC_LIST.format(tag)
+    fpath_input_list = dpath_dbm / fname_input_list
     
     # validate paths
     fpath_init: Path = dpath_pipeline / "init.sh"
@@ -364,7 +392,7 @@ def run(
     if (pythonpath is None) or not dname_nihpd in pythonpath:
         raise RuntimeError(
             "PYTHONPATH environment variable not set correctly. "
-            f"Make sure to source {fpath_init} before calling this function")
+            f"Make sure to source {fpath_init} before running")
         
     # need to write a local copy of the MINC script to make sure it uses Python 2
     # otherwise if the user has Python 3 installed it will take precedence
@@ -385,6 +413,8 @@ def run(
         COMMAND_PYTHON2, fpath_pipeline,
         "--list", fpath_input_list,
         "--output-dir", dpath_output,
+        "--model-dir", dpath_template,
+        "--model-name", template,
         "--lngcls",
         "--denoise",
         "--run",
@@ -395,14 +425,37 @@ def run(
 
 
 @cli.command()
-@click.argument("fpath_input_list", callback=callback_path)
-@click.argument("fpath_mask", callback=callback_path)
-@click.argument("dpath_output", callback=callback_path)
+@click.argument("dpath_dbm", callback=callback_path)
+@click.option("--tag", help="tag to differentiate datasets (ex: cohort ID)")
+@click.option("--template-dir", "dpath_template", callback=callback_path,
+              required=True, help=f"Path to MNI template (MINC)")
+@click.option("--template", required=True, help=f"MNI template name")
+@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @add_silent_option()
 @add_helper_options()
 @with_helper
 @require_minc
-def post_run(helper: ScriptHelper, fpath_input_list: Path, fpath_mask: Path, dpath_output: Path, silent):
+def post_run(
+    helper: ScriptHelper, 
+    dpath_dbm: Path, 
+    tag,
+    dpath_template: Path, 
+    template,
+    dname_output: Path, 
+    silent,
+):
+    
+    fpath_mask = add_suffix(dpath_template / template, SUFFIX_TEMPLATE_MASK, sep=None).with_suffix(EXT_MINC)
+    if not fpath_mask.exists():
+        raise FileNotFoundError(f"Mask file not found: {fpath_mask}")
+
+    if tag is None:
+        fname_input_list = DEFAULT_FNAME_MINC_LIST
+    else:
+        fname_input_list = PATTERN_MINC_LIST.format(tag)
+    fpath_input_list = dpath_dbm / fname_input_list
+
+    dpath_output = dpath_dbm / dname_output
 
     count_missing = 0
     count_new = 0
@@ -443,27 +496,33 @@ def post_run(helper: ScriptHelper, fpath_input_list: Path, fpath_mask: Path, dpa
 
 
 @cli.command()
-@click.argument("fpath_input_list", callback=callback_path)
 @click.argument("dpath_dbm", callback=callback_path)
+@click.option("--tag", help="tag to differentiate datasets (ex: cohort ID)")
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
-@click.option("--outfile", "fname_out", default=DEFAULT_FNAME_STATUS)
 @click.option("--write-new-list/--no-write-new-list", default=True)
 @add_helper_options()
 @with_helper
 def status(
     helper: ScriptHelper,
-    fpath_input_list: Path,
     dpath_dbm: Path,
+    tag,
     dname_output,
-    fname_out,
     write_new_list,
 ):
     
     col_input_t1w = 'input_t1w'
 
-    fpath_out = dpath_dbm / fname_out
-    helper.check_file(fpath_out)
+    if tag is None:
+        fname_input_list = DEFAULT_FNAME_MINC_LIST
+        fname_status = DEFAULT_FNAME_STATUS
+    else:
+        fname_input_list = PATTERN_MINC_LIST.format(tag)
+        fname_status = PATTERN_STATUS.format(tag)
+    fpath_input_list = dpath_dbm / fname_input_list
+    fpath_status = dpath_dbm / fname_status
     
+    helper.check_file(fpath_status)
+
     data_status = []
     for subject, session, input_t1w in load_list(fpath_input_list).itertuples(index=False):
     
@@ -486,11 +545,11 @@ def status(
     helper.print_info(df_status[KW_PIPELINE_COMPLETE].value_counts(sort=False, dropna=False))
 
     # write file
-    df_status.drop(columns=col_input_t1w).to_csv(fpath_out, index=False, header=True)
-    helper.print_outcome(f"Wrote status file to {fpath_out}")
+    df_status.drop(columns=col_input_t1w).to_csv(fpath_status, index=False, header=True)
+    helper.print_outcome(f"Wrote status file to {fpath_status}")
 
     if write_new_list:
-        fpath_new_list = add_suffix(fpath_input_list, TAG_MISSING)
+        fpath_new_list = add_suffix(fpath_input_list, TAG_MISSING) # TODO TAG_MISSING in option (?)
         df_new_list = df_status.loc[
             df_status[KW_PIPELINE_COMPLETE] == UNAVAILABLE,
             [COL_BIDS_SUBJECT, COL_BIDS_SESSION, col_input_t1w],
@@ -501,35 +560,44 @@ def status(
 
 
 @cli.command()
-@click.argument("fpath_status", callback=callback_path)
 @click.argument("dpath_dbm", callback=callback_path)
+@click.option("--tag", help="tag to differentiate datasets (ex: cohort ID)")
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--tarball-dir", "dname_tar", default=DEFAULT_DNAME_TAR)
-@click.option("--outfile", "fname_out", default=DEFAULT_FNAME_TAR)
 @add_silent_option()
 @add_helper_options()
 @with_helper
 def tar(
     helper: ScriptHelper,
-    fpath_status: Path,
     dpath_dbm: Path,
+    tag,
     dname_output,
     dname_tar,
-    fname_out,
     silent,
 ):
+    
+    if tag is None:
+        fname_status = DEFAULT_FNAME_STATUS
+        fname_tar = DEFAULT_FNAME_TAR
+    else:
+        fname_status = PATTERN_STATUS.format(tag)
+        fname_tar = PATTERN_TAR.format(tag)
+    fpath_status = dpath_dbm / fname_status
+
     dpath_output = dpath_dbm / dname_output
-    dpath_tmp = helper.dpath_tmp / fname_out
+    dpath_tmp = helper.dpath_tmp / fname_tar
     dpath_tar = dpath_dbm / dname_tar
     helper.mkdir(dpath_tmp)
     helper.mkdir(dpath_tar, exist_ok=True)
 
-    fpath_out = dpath_tar / f'{fname_out}{EXT_TAR}{EXT_GZIP}'
+    fpath_out = dpath_tar / f'{fname_tar}{EXT_TAR}{EXT_GZIP}'
     helper.check_file(fpath_out)
 
     df_status = pd.read_csv(fpath_status, dtype=str)
     df_status_success = df_status.loc[df_status[KW_PIPELINE_COMPLETE] == SUCCESS]
+    helper.print_info(f'Tarring {len(df_status_success)} DBM files')
 
+    data_file_info = []
     for subject, session in df_status_success[[COL_BIDS_SUBJECT, COL_BIDS_SESSION]].itertuples(index=False):
         dpath_vbm = dpath_output / subject / session / DNAME_VBM
         fpath_dbm_file = add_suffix(dpath_vbm / f'{PREFIX_DBM_FILE}_{subject}_{session}', SUFFIX_MASKED).with_suffix(f'{EXT_NIFTI}{EXT_GZIP}')
@@ -537,17 +605,80 @@ def tar(
         if not fpath_dbm_file.exists():
             raise RuntimeError(f'File not found: {fpath_dbm_file}')
         
+        data_file_info.append({
+            COL_BIDS_SUBJECT: subject,
+            COL_BIDS_SESSION: session,
+            'filename': fpath_dbm_file.name,
+        })
         helper.run_command(['ln', '-s', fpath_dbm_file, dpath_tmp], silent=silent)
+
+    # info file
+    df_file_info = pd.DataFrame(data_file_info)
+    df_file_info.to_csv(dpath_tmp / FNAME_INFO, header=True, index=False)
+    helper.print_info(f'Info file name: {FNAME_INFO}')
 
     # tar command flags:
     #   -h  dereference (tar files instead of symlinks)
     #   -c  create
     #   -z  gzip
-    #   -f  output filename
+    #   -f  name of output file
     #   -C  move to this directory before tarring
     helper.run_command(['tar', '-hczf', fpath_out, '-C', dpath_tmp, '.'], silent=silent)
-
     helper.print_outcome(f'Wrote file to {fpath_out}')
+
+
+@cli.command()
+@click.argument("dpath-bids", callback=callback_path)
+@click.option("-f", "--fname-env", default=DEFAULT_FNAME_ENV)
+@add_helper_options()
+@with_helper
+def init_env(
+    dpath_bids: Path,
+    fname_env: str,
+    helper: ScriptHelper,
+):
+    dpath_root = Path(__file__).parents[3]
+
+    if helper.verbose:
+        helper.print_info(
+            f"Generating {fname_env} file:\n"
+            f"- Project root directory: {dpath_root}\n"
+            f"- BIDS directory: {dpath_bids}"
+        )
+
+    # project root directory
+    constants = {
+        "DPATH_ROOT": dpath_root,
+        "DPATH_BIDS": dpath_bids,
+    }
+
+    # MRI processing subdirectory
+    constants["DPATH_MRI_CODE"] = constants["DPATH_ROOT"] / DNAME_MRI_CODE
+    constants["FPATH_MRI_CODE"] = constants["DPATH_MRI_CODE"] / FNAME_MRI_CODE
+    constants["FPATH_CONTAINER"] = constants["DPATH_MRI_CODE"] / FNAME_CONTAINER
+    constants["DPATH_MRI_SCRIPTS"] = constants["DPATH_MRI_CODE"] / FNAME_MRI_SCRIPTS
+
+    # MRI output
+    constants["DPATH_OUT"] = constants["DPATH_ROOT"] / INIT_DNAME_OUT
+    constants["DPATH_OUT_DBM"] = constants["DPATH_OUT"] / INIT_DNAME_OUT_DBM
+    constants["FPATH_BIDS_LIST"] = constants["DPATH_OUT_DBM"] / DEFAULT_FNAME_BIDS_LIST
+    constants["FPATH_BIDS_LIST_FILTERED"] = constants["DPATH_OUT_DBM"] / DEFAULT_FNAME_BIDS_LIST_FILTERED
+
+    if not Path(constants["DPATH_MRI_CODE"]).exists():
+        helper.print_error(
+            f'Directory not found: {constants["DPATH_MRI_CODE"]}. '
+            "Make sure root directory is correct."
+        )
+
+    # write dotenv file
+    fpath_out = Path(constants["DPATH_MRI_SCRIPTS"], fname_env)
+    helper.check_file(fpath_out)
+    with fpath_out.open("w") as file_dotenv:
+        for key, value in constants.items():
+            line = f"{key}={value}\n"
+            file_dotenv.write(line)
+
+    helper.print_outcome(f"Variables written to {fpath_out}", text_color="blue")
 
 
 if __name__ == "__main__":
