@@ -10,14 +10,14 @@
 # required
 DPATH_PIPELINE="/ipl/quarantine/experimental/2013-02-15"
 DPATH_TEMPLATE="/ipl/quarantine/models/icbm152_model_09c"
-# TEMPLATE="mni_icbm152_t1_tal_nlin_sym_09c"
-TEMPLATE="mni_icbm152_t1_tal_nlin_asym_09c"
+TEMPLATE="mni_icbm152_t1_tal_nlin_sym_09c"
+# TEMPLATE="mni_icbm152_t1_tal_nlin_asym_09c"
 # optional
 FLAG_SGE_QUEUE="--queue origami.q"
-FLAG_OVERWRITE="--overwrite"
+# FLAG_OVERWRITE="--overwrite"
 # FLAG_DRY_RUN="--dry-run"
 # FLAG_INPUT="--minc-input-dir input"
-FLAG_OUTPUT="--output-dir output-asym"
+# FLAG_OUTPUT="--output-dir output-asym"
 
 FPATH_DOTENV=".env" # relative to current directory
 

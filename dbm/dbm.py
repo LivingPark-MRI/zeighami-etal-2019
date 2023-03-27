@@ -10,6 +10,7 @@ from bids import BIDSLayout
 from bids.layout import parse_file_entities
 
 import livingpark_utils
+from livingpark_utils.dataset.ppmi import cohort_id as get_cohort_id
 from livingpark_utils.zeighamietal.constants import COL_PAT_ID, COL_VISIT_TYPE
 
 from helpers import (
@@ -66,6 +67,7 @@ INIT_DNAME_OUT_DBM = "dbm"
 
 # tagged filename patterns
 PATTERN_BIDS_LIST_FILTERED = "bids_list-{}.csv"
+PATTERN_COHORT = "zeighami-etal-2019-cohort-{}.csv"
 PATTERN_MINC_LIST = "minc_list-{}.csv"
 PATTERN_TAR = "dbm_results-{}" # without extension
 PATTERN_STATUS = "status-{}.csv"
@@ -91,9 +93,10 @@ def cli():
     return
 
 
-@cli.command() # TODO refactor arguments/options
+@cli.command()
+@click.argument("dpath_dbm", callback=callback_path)
 @click.argument("dpath_bids", type=str, callback=callback_path)
-@click.argument("fpath_out", type=str, callback=callback_path)
+@click.option("--tag", help="tag to differentiate datasets (ex: cohort ID)")
 @click.option("--reset-cache/--use-cache", type=bool, default=DEFAULT_RESET_CACHE,
               help=f"Whether to overwrite the pyBIDS database file. Default: {DEFAULT_RESET_CACHE}")
 @click.option("--fname-cache", type=str, default=DEFAULT_FNAME_CACHE,
@@ -102,8 +105,9 @@ def cli():
 @with_helper
 def bids_list(
     helper: ScriptHelper,
-    dpath_bids: Path, 
-    fpath_out: Path, 
+    dpath_dbm: Path,
+    dpath_bids: Path,
+    tag: str, 
     reset_cache: bool, 
     fname_cache: str, 
 ):
@@ -113,6 +117,11 @@ def bids_list(
         helper.print_error(f"BIDS directory not found: {dpath_bids}")
 
     # check if file exists
+    if tag is None:
+        fname_out = DEFAULT_FNAME_BIDS_LIST
+    else:
+        fname_out = PATTERN_BIDS_LIST_FILTERED.format(tag)
+    fpath_out = dpath_dbm / fname_out
     helper.check_file(fpath_out)
 
     # create output directory
@@ -141,11 +150,13 @@ def bids_list(
 
 
 @cli.command() # TODO refactor arguments/options
-@click.argument("fpath_bids_list", callback=callback_path)
+@click.argument("dpath_dbm", callback=callback_path)
 @click.argument("fpath_cohort", callback=callback_path)
-@click.argument("fpath_out", callback=callback_path)
-@click.option("--bad-scans", "fpath_bad_scans", callback=callback_path,
+@click.option("--tag", help="tag to differentiate datasets (ex: cohort ID)")
+@click.option("--bad-scans", "fname_bad_scans", default=DEFAULT_FNAME_BAD_SCANS,
               help="Path to file listing paths of T1s to ignore (e.g. cases with multiple runs)")
+@click.option("--fname_input", default=DEFAULT_FNAME_BIDS_LIST,
+              help=f"Name of BIDS list file to filter. Default: {DEFAULT_FNAME_BIDS_LIST}")
 @click.option("--subject", "col_cohort_subject", default=COL_PAT_ID,
               help="Name of subject column in cohort file")
 @click.option("--session", "col_cohort_session", default=COL_VISIT_TYPE,
@@ -154,10 +165,11 @@ def bids_list(
 @with_helper
 def bids_filter(
     helper: ScriptHelper,
-    fpath_bids_list: Path,
+    dpath_dbm: Path,
     fpath_cohort: Path,
-    fpath_out: Path,
-    fpath_bad_scans: Path,
+    tag: str,
+    fname_bad_scans: str,
+    fname_input: str,
     col_cohort_subject: str,
     col_cohort_session: str,
 ):
@@ -166,6 +178,15 @@ def bids_filter(
 
     col_fpath = "fpath"
     cols_merge = [COL_BIDS_SUBJECT, COL_BIDS_SESSION]
+
+    # generate paths
+    if tag is None:
+        fname_out = DEFAULT_FNAME_BIDS_LIST_FILTERED
+    else:
+        fname_out = PATTERN_BIDS_LIST_FILTERED.format(tag)
+    fpath_out = dpath_dbm / fname_out
+    fpath_bids_list = dpath_dbm / fname_input
+    fpath_bad_scans = dpath_dbm / fname_bad_scans
 
     def parse_and_add_path(path, col_path=col_fpath):
         entities = parse_file_entities(path)
@@ -185,7 +206,7 @@ def bids_filter(
     helper.print_info(f"Loaded BIDS list:\t\t{df_bids_list.shape}")
 
     df_cohort = pd.read_csv(fpath_cohort)
-    cohort_id_original = livingpark_utils.dataset.ppmi.cohort_id(df_cohort)
+    cohort_id_original = get_cohort_id(df_cohort)
     helper.print_info(
         f"Loaded cohort info:\t\t{df_cohort.shape} (ID={cohort_id_original})"
     )
@@ -203,13 +224,13 @@ def bids_filter(
             f"{len(subjects_diff)} subjects are not in the BIDS list",
             text_color="yellow",
         )
-        # helper.echo(subjects_diff, text_color='yellow') 
+        # helper.echo(','.join(subjects_diff), text_color='yellow') 
 
     # match by subject and ID
     df_filtered = df_bids_list.merge(df_cohort, on=cols_merge, how="inner")
     helper.print_info(f"Filtered BIDS list:\t\t{df_filtered.shape}")
 
-    if fpath_bad_scans is not None:
+    if fpath_bad_scans.exists():
         bad_scans = (
             load_list(fpath_bad_scans).squeeze("columns").tolist()
         )
@@ -235,22 +256,22 @@ def bids_filter(
 
             dfs_multiple.append(df_multiple[col_fpath])
 
-        fpath_bad_out = Path(DEFAULT_FNAME_BAD_SCANS)
-        while fpath_bad_out.exists():
-            fpath_bad_out = add_suffix(fpath_bad_out, sep=None)
+        fpath_bad_scans = Path(DEFAULT_FNAME_BAD_SCANS)
+        while fpath_bad_scans.exists():
+            fpath_bad_scans = add_suffix(fpath_bad_scans, sep=None)
 
-        pd.concat(dfs_multiple).to_csv(fpath_bad_out, header=False, index=False)
+        pd.concat(dfs_multiple).to_csv(fpath_bad_scans, header=False, index=False)
 
         helper.print_error(
             "Found multiple runs for a single session. "
-            f"File names written to: {fpath_bad_out}. "
+            f"File names written to: {fpath_bad_scans}. "
             "You need to manually check these scans, choose at most one to keep, "
-            f"delete it from {fpath_bad_out}, "
+            f"delete it from {fpath_bad_scans}, "
             "then pass that file as input using --bad-scans"
         )
 
     # print new cohort ID
-    new_cohort_id = livingpark_utils.dataset.ppmi.cohort_id(
+    new_cohort_id = get_cohort_id(
         df_filtered.drop_duplicates(subset=col_cohort_subject),
     )
     helper.echo(f"COHORT_ID={new_cohort_id}", force_color=False)
@@ -337,7 +358,7 @@ def pre_run(
             fpath_minc,
         ])
 
-    helper.print_outcome(f"Skipped {count_skipped} files that already existsted")
+    helper.print_outcome(f"Skipped {count_skipped} files that already existed")
     helper.print_outcome(f"Wrote {count_new} new files to {dpath_minc_files}")
 
     df_input_list = pd.DataFrame(data_input_list)
@@ -551,7 +572,7 @@ def status(
     if write_new_list:
         fpath_new_list = add_suffix(fpath_input_list, TAG_MISSING) # TODO TAG_MISSING in option (?)
         df_new_list = df_status.loc[
-            df_status[KW_PIPELINE_COMPLETE] == UNAVAILABLE,
+            df_status[KW_PIPELINE_COMPLETE] != SUCCESS,
             [COL_BIDS_SUBJECT, COL_BIDS_SESSION, col_input_t1w],
         ]
         if len(df_new_list) > 0:
