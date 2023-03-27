@@ -52,6 +52,8 @@ DEFAULT_FNAME_BAD_SCANS = "bad_scans.csv"
 DEFAULT_FNAME_STATUS = "status.csv"
 DEFAULT_DNAME_TAR = "tarballs"
 DEFAULT_FNAME_TAR = "dbm_results"
+DEFAULT_DNAME_QC_OUT = "qc"
+DEFAULT_QC_SESSIONS = ["1"]
 
 # BIDS entities constants
 COL_BIDS_SUBJECT = "subject"
@@ -77,16 +79,30 @@ COMMAND_PYTHON2 = "python2"
 
 # DBM post
 DNAME_VBM = "vbm"
-PREFIX_DBM_FILE = "vbm_jac"
+DNAME_NLR = "stx2"
+DNAME_QC = "qc"
+PATTERN_DBM_FILE = "vbm_jac_{}_{}.mnc" # subject session
+PATTERN_NLR_FILE = "stx2_{}_{}_t1.mnc" # subject session
+PATTERN_QC_NONLINEAR = "qc_stx2_t1_{}_{}.jpg" # subject session
 FNAME_MASK = f"mask{EXT_MINC}"
 SUFFIX_MASKED = "masked"
 SUFFIX_TEMPLATE_MASK = "_mask" # for MNI template
+SUFFIX_TEMPLATE_OUTLINE = "_outline" # for MNI template
 
 # DBM status
 TAG_MISSING = "missing"
 
 # tar
 FNAME_INFO = "info.csv"
+
+# qc
+QC_FILE_PATTERNS = {
+    "linear": "qc_stx_t1_{}_{}.jpg", # subject session
+    "linear_mask": "qc_stx_mask_{}_{}.jpg",
+    "nonlinear": PATTERN_QC_NONLINEAR,
+    "nonlinear_mask": "qc_stx2_mask_{}_{}.jpg",
+}
+
 
 @click.group()
 def cli():
@@ -442,7 +458,8 @@ def run(
     ]
     if with_sge:
         command.extend(["--sge", "--queue", sge_queue])
-    helper.run_command(command)
+    print(' '.join([str(c) for c in command]))
+    # helper.run_command(command)
 
 
 @cli.command()
@@ -452,6 +469,7 @@ def run(
               required=True, help=f"Path to MNI template (MINC)")
 @click.option("--template", required=True, help=f"MNI template name")
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
+@click.option("--qc/--no-qc", "with_qc", default=True)
 @add_silent_option()
 @add_helper_options()
 @with_helper
@@ -463,12 +481,15 @@ def post_run(
     dpath_template: Path, 
     template,
     dname_output: Path, 
+    with_qc,
     silent,
 ):
     
     fpath_mask = add_suffix(dpath_template / template, SUFFIX_TEMPLATE_MASK, sep=None).with_suffix(EXT_MINC)
-    if not fpath_mask.exists():
-        raise FileNotFoundError(f"Mask file not found: {fpath_mask}")
+    fpath_outline = add_suffix(dpath_template / template, SUFFIX_TEMPLATE_OUTLINE, sep=None).with_suffix(EXT_MINC)
+    for fpath in [fpath_mask, fpath_outline]:
+        if not fpath.exists():
+            raise FileNotFoundError(f"Template file not found: {fpath}")
 
     if tag is None:
         fname_input_list = DEFAULT_FNAME_MINC_LIST
@@ -483,7 +504,9 @@ def post_run(
     count_existing = 0
     for subject, session, _ in load_list(fpath_input_list).itertuples(index=False):
 
-        fpath_dbm: Path = dpath_output / subject / session / DNAME_VBM / f"{PREFIX_DBM_FILE}_{subject}_{session}{EXT_MINC}"
+        dpath_results = dpath_output / subject / session
+
+        fpath_dbm: Path = dpath_results / DNAME_VBM / PATTERN_DBM_FILE.format(subject, session)
         if not fpath_dbm.exists():
             helper.print_info(
                 f"DBM file not found for subject {subject}, session {session}.",
@@ -510,6 +533,28 @@ def post_run(
             count_new += 1
         else:
             count_existing += 1
+
+        # write QC image
+        if with_qc:
+            fpath_nonlinear: Path = dpath_results / DNAME_NLR / PATTERN_NLR_FILE.format(subject, session)
+            
+            dpath_qc: Path = dpath_output / subject / DNAME_QC
+            fpath_nonlinear_qc = dpath_qc / PATTERN_QC_NONLINEAR.format(subject, session)
+
+            if fpath_nonlinear.exists() and not fpath_nonlinear_qc.exists():
+                helper.run_command(
+                    [
+                        "minc_qc.pl",
+                        fpath_nonlinear,
+                        fpath_nonlinear_qc,
+                        "--title", f'{subject}_{session}',
+                        "--image-range", 0, 120,
+                        "--mask", fpath_outline,
+                        "--big",
+                        "--clamp",
+                    ],
+                    silent=silent,
+                )
 
     helper.print_outcome(f"Found {count_existing} processed DBM files")
     helper.print_outcome(f"Processed {count_new} new DBM files")
@@ -701,6 +746,55 @@ def init_env(
 
     helper.print_outcome(f"Variables written to {fpath_out}", text_color="blue")
 
+
+@cli.command()
+@click.argument("dpath_dbm", callback=callback_path)
+@click.argument("sessions", nargs=-1)
+@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
+@click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT)
+@add_helper_options()
+@with_helper
+def qc(
+    helper: ScriptHelper, 
+    dpath_dbm: Path, 
+    sessions, 
+    dname_output, 
+    dname_qc, 
+):
+
+    if len(sessions) == 0:
+        sessions = DEFAULT_QC_SESSIONS
+
+    dpath_output = dpath_dbm / dname_output
+    dpath_qc_out = dpath_dbm / dname_qc
+
+    helper.mkdir(dpath_qc_out, exist_ok=True)
+
+    dpaths_subject = [dpath for dpath in dpath_output.iterdir() if dpath.is_dir()]
+    for dpath_subject in dpaths_subject:
+        subject = dpath_subject.name
+
+        dpath_subject_qc = dpath_subject / "qc"
+
+        for session in sessions:
+
+            count = 0
+            for step, pattern in QC_FILE_PATTERNS.items():
+                fpath_qc = Path(dpath_subject_qc, pattern.format(subject, session))
+
+                if fpath_qc.exists():
+                    fpath_qc_link: Path = dpath_qc_out / step / fpath_qc.name
+                    helper.mkdir(fpath_qc_link.parent, exist_ok=True)
+                    fpath_qc_link.unlink(missing_ok=True)
+                    fpath_qc_link.symlink_to(fpath_qc)
+                    count += 1
+
+            if count < len(QC_FILE_PATTERNS):
+                helper.print_info(
+                    f"Missing {len(QC_FILE_PATTERNS) - count} QC file(s) "
+                    f"for subject {subject}, session {session}"
+                )
+        
 
 if __name__ == "__main__":
     cli()
