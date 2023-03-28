@@ -13,7 +13,7 @@ DPATH_TEMPLATE="/ipl/quarantine/models/icbm152_model_09c"
 TEMPLATE="mni_icbm152_t1_tal_nlin_sym_09c"
 # TEMPLATE="mni_icbm152_t1_tal_nlin_asym_09c"
 # optional
-FLAG_SGE_QUEUE="--queue origami.q"
+# FLAG_SGE_QUEUE="--queue origami.q"
 # FLAG_OVERWRITE="--overwrite"
 # FLAG_DRY_RUN="--dry-run"
 # FLAG_INPUT="--minc-input-dir input"
@@ -62,6 +62,8 @@ eval $COMMAND_PRE_RUN
 if [ ! -z "$FLAG_SGE_QUEUE" ]
 then
     FLAG_SGE_QUEUE="--sge $FLAG_SGE_QUEUE"
+else
+    FLAG_SGE_QUEUE="--no-sge"
 fi
 
 COMMAND_RUN=" \

@@ -323,7 +323,7 @@ def pre_run(
     fpath_bids_list: Path = dpath_dbm / fname_bids_list
 
     if not fpath_bids_list.exists():
-        raise FileNotFoundError()
+        raise FileNotFoundError(fpath_bids_list)
 
     dpath_minc_files = dpath_dbm / dname_input
     helper.mkdir(dpath_minc_files, exist_ok=True)
@@ -458,8 +458,8 @@ def run(
     ]
     if with_sge:
         command.extend(["--sge", "--queue", sge_queue])
-    print(' '.join([str(c) for c in command]))
-    # helper.run_command(command)
+    # print(' '.join([str(c) for c in command]))
+    helper.run_command(command)
 
 
 @cli.command()
