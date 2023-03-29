@@ -40,15 +40,21 @@ from tracker import (
 )
 
 # default settings
-DEFAULT_FNAME_ENV = ".env"
 DEFAULT_RESET_CACHE = False
 DEFAULT_FNAME_CACHE = ".bidslayout"
-DEFAULT_DNAME_INPUT = "input"
-DEFAULT_DNAME_OUTPUT = "output"
 DEFAULT_FNAME_BIDS_LIST = "bids_list-all.csv"
 DEFAULT_FNAME_BIDS_LIST_FILTERED = "bids_list.csv"
-DEFAULT_FNAME_MINC_LIST = "minc_list.csv"
 DEFAULT_FNAME_BAD_SCANS = "bad_scans.csv"
+
+DEFAULT_FNAME_ENV = ".env"
+DEFAULT_DPATH_PIPELINE="/ipl/quarantine/experimental/2013-02-15"
+DEFAULT_DPATH_TEMPLATE="/ipl/quarantine/models/icbm152_model_09c"
+DEFAULT_TEMPLATE="mni_icbm152_t1_tal_nlin_sym_09c"
+DEFAULT_DNAME_INPUT = "input"
+DEFAULT_DNAME_DICOM = "dicom"
+DEFAULT_DNAME_MINC = "minc"
+DEFAULT_DNAME_OUTPUT = "output"
+DEFAULT_FNAME_MINC_LIST = "minc_list.csv"
 DEFAULT_FNAME_STATUS = "status.csv"
 DEFAULT_DNAME_TAR = "tarballs"
 DEFAULT_FNAME_TAR = "dbm_results"
@@ -79,11 +85,14 @@ COMMAND_PYTHON2 = "python2"
 
 # DBM post
 DNAME_VBM = "vbm"
-DNAME_NLR = "stx2"
+DNAME_LINEAR2 = "stx2"
+DNAME_NONLINEAR = 'nl'
 DNAME_QC = "qc"
 PATTERN_DBM_FILE = "vbm_jac_{}_{}.mnc" # subject session
-PATTERN_NLR_FILE = "stx2_{}_{}_t1.mnc" # subject session
-PATTERN_QC_NONLINEAR = "qc_stx2_t1_{}_{}.jpg" # subject session
+PATTERN_LINEAR2_FILE = "stx2_{}_{}_t1.mnc"
+PATTERN_NONLINEAR_TRANSFORM_FILE = 'nl_{}_{}.xfm'
+PATTERN_QC_LINEAR2 = "qc_stx2_t1_{}_{}.jpg"
+PATTERN_QC_NONLINEAR = "qc_nl_t1_{}_{}.jpg"
 FNAME_MASK = f"mask{EXT_MINC}"
 SUFFIX_MASKED = "masked"
 SUFFIX_TEMPLATE_MASK = "_mask" # for MNI template
@@ -99,7 +108,7 @@ FNAME_INFO = "info.csv"
 QC_FILE_PATTERNS = {
     "linear": "qc_stx_t1_{}_{}.jpg", # subject session
     "linear_mask": "qc_stx_mask_{}_{}.jpg",
-    "nonlinear": PATTERN_QC_NONLINEAR,
+    "nonlinear": PATTERN_QC_LINEAR2,
     "nonlinear_mask": "qc_stx2_mask_{}_{}.jpg",
 }
 
@@ -165,7 +174,7 @@ def bids_list(
         helper.print_outcome(f"Wrote BIDS paths to {fpath_out}")
 
 
-@cli.command() # TODO refactor arguments/options
+@cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
 @click.argument("fpath_cohort", callback=callback_path)
 @click.option("--tag", help="tag to differentiate datasets (ex: cohort ID)")
@@ -484,6 +493,21 @@ def post_run(
     with_qc,
     silent,
 ):
+
+    def create_qc_image(fpath, fpath_qc, fpath_mask, title):
+        helper.run_command(
+            [
+                "minc_qc.pl",
+                fpath,
+                fpath_qc,
+                "--title", title,
+                "--image-range", 0, 120,
+                "--mask", fpath_mask,
+                "--big",
+                "--clamp",
+            ],
+            silent=silent,
+        )
     
     fpath_mask = add_suffix(dpath_template / template, SUFFIX_TEMPLATE_MASK, sep=None).with_suffix(EXT_MINC)
     fpath_outline = add_suffix(dpath_template / template, SUFFIX_TEMPLATE_OUTLINE, sep=None).with_suffix(EXT_MINC)
@@ -502,6 +526,7 @@ def post_run(
     count_missing = 0
     count_new = 0
     count_existing = 0
+    count_qc = 0
     for subject, session, _ in load_list(fpath_input_list).itertuples(index=False):
 
         dpath_results = dpath_output / subject / session
@@ -536,29 +561,47 @@ def post_run(
 
         # write QC image
         if with_qc:
-            fpath_nonlinear: Path = dpath_results / DNAME_NLR / PATTERN_NLR_FILE.format(subject, session)
-            
+            fpath_linear2: Path = dpath_results / DNAME_LINEAR2 / PATTERN_LINEAR2_FILE.format(subject, session)
+            fpath_nonlinear_transform: Path = dpath_results / DNAME_NONLINEAR / PATTERN_NONLINEAR_TRANSFORM_FILE.format(subject, session)
+            fpath_nonlinear = fpath_nonlinear_transform.with_suffix(EXT_MINC)
+
             dpath_qc: Path = dpath_output / subject / DNAME_QC
+            fpath_linear2_qc = dpath_qc / PATTERN_QC_LINEAR2.format(subject, session)
             fpath_nonlinear_qc = dpath_qc / PATTERN_QC_NONLINEAR.format(subject, session)
 
-            if fpath_nonlinear.exists() and not fpath_nonlinear_qc.exists():
+            if fpath_linear2.exists() and not fpath_linear2_qc.exists():
+                create_qc_image(
+                    fpath_linear2, 
+                    fpath_linear2_qc, 
+                    fpath_outline, 
+                    f'{subject}_{session}',
+                )
+                count_qc += 1
+            
+            if fpath_nonlinear_transform.exists() and not fpath_nonlinear_qc.exists():
                 helper.run_command(
                     [
-                        "minc_qc.pl",
+                        "mincresample",
+                        "-transformation", fpath_nonlinear_transform,
+                        "-like", fpath_linear2,
+                        fpath_linear2,
                         fpath_nonlinear,
-                        fpath_nonlinear_qc,
-                        "--title", f'{subject}_{session}',
-                        "--image-range", 0, 120,
-                        "--mask", fpath_outline,
-                        "--big",
-                        "--clamp",
                     ],
                     silent=silent,
                 )
 
+                create_qc_image(
+                    fpath_nonlinear, 
+                    fpath_nonlinear_qc, 
+                    fpath_outline, 
+                    f'{subject}_{session}',
+                )
+                count_qc += 1
+
     helper.print_outcome(f"Found {count_existing} processed DBM files")
     helper.print_outcome(f"Processed {count_new} new DBM files")
     helper.print_outcome(f"Skipped {count_missing} cases with missing DBM results")
+    helper.print_outcome(f"{count_qc} images written")
 
 
 @cli.command()
