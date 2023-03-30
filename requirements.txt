@@ -1,7 +1,9 @@
+click~=8.1.3
 livingpark-utils
 nibabel
 nilearn
 numpy
-pandas
+pandas~=1.5.0
+pybids~=0.15.1
 seaborn
 scipy
