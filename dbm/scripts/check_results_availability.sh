@@ -1,11 +1,16 @@
 #!/bin/bash
 
+##################################################
+# CHECK RESULTS AVAILABILITY
+# * TODO
+##################################################
+
 # settings
-DPATH_BIDS_DEFAULT="/data/pd/ppmi/releases/PPMI-ver_T1/bids"
-FNAME_DOTENV=".env"
-FNAME_DOTENV_SCRIPT="create_default_dotenv.py"
-COHORT_PREFIX="zeighami-etal-2019-cohort-"
-FNAME_BAD_SCANS="bad_scans.csv"
+PATTERN_COHORT="zeighami-etal-2019-cohort-{}.csv"
+FNAME_BAD_SCANS="bad_scans.csv" # TODO
+# OVERWRITE_FLAG="--overwrite"
+
+FPATH_DOTENV=".env" # relative to current directory
 
 # temporary file
 FPATH_TMP=$(mktemp /tmp/check_results_availability.XXXXXX)
@@ -41,54 +46,39 @@ exit_if_error() {
 # ========================================
 # parse inputs
 # ========================================
-if [[ $# -lt 1 || $# -gt 2 ]]
+if [ $# != 1 ]
 then
-	echo "Usage: $0 COHORT_ID [DPATH_BIDS]"
-	exit 1
+    echo "Usage: $0 COHORT_ID"
+    exit 1
 else
-	COHORT_ID=$1
-
-	if [ ! -z $2 ]
-	then
-		DPATH_BIDS=$2
-	else
-		DPATH_BIDS=$DPATH_BIDS_DEFAULT
-	fi
+    COHORT_ID=$1
+    if [ ! -z $COHORT_ID ]
+    then
+        DATASET_TAG_FLAG="--tag $COHORT_ID"
+    fi
 fi
 
-message "COHORT_ID: $COHORT_ID"
+# move to scripts directory
+DPATH_INITIAL=`pwd`
+cd `dirname $(realpath $0)`
 
 # ========================================
 # load environment variables
 # ========================================
 
-# find path to containing environment variable definitions
-FPATH_CURRENT=`realpath $0`
-DPATH_CURRENT=`dirname $FPATH_CURRENT`
-FPATH_DOTENV="$DPATH_CURRENT/$FNAME_DOTENV"
-
-# if env file does not exist, create it
+# make sure env file exists
 if [ ! -f $FPATH_DOTENV ]
 then
-	echo "Did not find dotenv file. Generating default one..."
-	echo "DPATH_BIDS: $DPATH_BIDS"
-	$DPATH_CURRENT/$FNAME_DOTENV_SCRIPT \
-		$DPATH_CURRENT/.. \
-		$FNAME_DOTENV_SCRIPT \
-		--fname-dotenv $FPATH_DOTENV
-
-	if [ ! -f $FPATH_DOTENV ]
-	then
-		echo "ERROR when creating default dotenv file"
-		exit 2
-	fi
+	echo "File not found: $FPATH_DOTENV. Did you run the init script?"
+    exit 2
 fi
 source $FPATH_DOTENV
 
 # ========================================
 # make sure cohort file exists
 # ========================================
-FPATH_COHORT="$DPATH_ROOT/$COHORT_PREFIX$COHORT_ID.csv"
+FNAME_COHORT="${PATTERN_COHORT/\{\}/$COHORT_ID}"
+FPATH_COHORT="$DPATH_ROOT/$FNAME_COHORT"
 if [ ! -f $FPATH_COHORT ]
 then
 	echo "Cohort file not found: $FPATH_COHORT"
@@ -96,41 +86,32 @@ then
 fi
 
 # ========================================
-# make sure BIDS list file exists
-# TODO test this
+# generate BIDS list file
+# TODO check if it already exists first?
 # ========================================
-if [ ! -f $FPATH_BIDS_LIST_ALL ]
-then
-	echo "Did not find $FPATH_BIDS_LIST_ALL. Generating new one..."
-	
-	$FPATH_SCRIPT bids-list \
+COMMAND_BIDS_LIST=" \
+	$FPATH_MRI_CODE bids-list \
+		$DPATH_OUT_DBM \
 		$DPATH_BIDS \
-		$FPATH_BIDS_LIST_ALL
+"
 
-	exit_if_error $?
-fi
+echo $COMMAND_BIDS_LIST
+eval $COMMAND_BIDS_LIST
 
 # ========================================
 # filter list of T1 filepaths based on cohort
 # ========================================
-FPATH_BAD_SCANS="$DPATH_ROOT/$FNAME_BAD_SCANS"
-DPATH_BIDS_LIST=`dirname $FPATH_BIDS_LIST_ALL`
-FPATH_BIDS_LIST_COHORT=$DPATH_BIDS_LIST/bids_list-$COHORT_ID.txt
+COMMAND_BIDS_FILTER=" \
+	$FPATH_MRI_CODE bids-filter \
+		$DPATH_OUT_DBM \
+		$FPATH_COHORT \
+		$DATASET_TAG_FLAG \
+		--overwrite \
+	| tee $FPATH_TMP \
+"
 
-if [ ! -f $FPATH_BAD_SCANS ]
-then
-	echo "Did not find bad scans file. Creating empty one..."
-	touch $FPATH_BAD_SCANS
-fi
-
-message "BIDS-FILTER"
-$FPATH_SCRIPT bids-filter \
-	$FPATH_BIDS_LIST_ALL \
-	$FPATH_COHORT \
-	$FPATH_BIDS_LIST_COHORT \
-	--bad-scans $FPATH_BAD_SCANS \
-	--overwrite | tee $FPATH_TMP
-exit_if_error $?
+echo $COMMAND_BIDS_FILTER
+eval $COMMAND_BIDS_FILTER
 
 COHORT_ID_BIDS_LIST=$(grep COHORT_ID $FPATH_TMP | awk -F '=' '{ print $2 }' )
 
@@ -143,107 +124,108 @@ then
 	exit_if_error $?
 fi
 
-# TODO DBM post run
+# # TODO delete missing input list
 
-# TODO delete missing input list
+# # ========================================
+# # check DBM processing status
+# # ========================================
+# message "DBM-STATUS"
+# $FPATH_MRI_CODE dbm-status \
+# 	$FPATH_BIDS_LIST_COHORT \
+# 	$DPATH_OUT_DBM \
+# 	--step denoised .denoised.mnc \
+# 	--step lin_reg .denoised.norm_lr.masked.mnc \
+# 	--step lin_reg_mask .denoised.norm_lr_mask.mnc \
+# 	--step nonlin_reg .denoised.norm_lr.masked.nlr_level$NLR_LEVEL.mnc \
+# 	--step dbm_nii .denoised.norm_lr.masked.nlr_level$NLR_LEVEL.dbm_fwhm$DBM_FWHM.reshaped.masked.nii.gz \
+# 	--overwrite
+# exit_if_error $?
 
-# ========================================
-# check DBM processing status
-# ========================================
-message "DBM-STATUS"
-$FPATH_SCRIPT dbm-status \
-	$FPATH_BIDS_LIST_COHORT \
-	$DPATH_OUT_DBM \
-	--step denoised .denoised.mnc \
-	--step lin_reg .denoised.norm_lr.masked.mnc \
-	--step lin_reg_mask .denoised.norm_lr_mask.mnc \
-	--step nonlin_reg .denoised.norm_lr.masked.nlr_level$NLR_LEVEL.mnc \
-	--step dbm_nii .denoised.norm_lr.masked.nlr_level$NLR_LEVEL.dbm_fwhm$DBM_FWHM.reshaped.masked.nii.gz \
-	--overwrite
-exit_if_error $?
+# # TODO check if new missing input list was written
 
-# TODO check if new missing input list was written
+# message "COPYING"
+# FPATH_PROC_STATUS_COHORT="${DPATH_OUT_DBM}/proc_status-${COHORT_ID}.csv"
+# cp -v $DPATH_OUT_DBM/proc_status.csv $FPATH_PROC_STATUS_COHORT
+# exit_if_error $?
 
-message "COPYING"
-FPATH_PROC_STATUS_COHORT="${DPATH_OUT_DBM}/proc_status-${COHORT_ID}.csv"
-cp -v $DPATH_OUT_DBM/proc_status.csv $FPATH_PROC_STATUS_COHORT
-exit_if_error $?
+# # ========================================
+# # build list of filenames for ICA
+# # ========================================
+# message "DBM-LIST"
+# $FPATH_MRI_CODE dbm-list \
+# 	$DPATH_OUT_DBM \
+# 	$FPATH_DBM_LIST \
+# 	--overwrite | tee $FPATH_TMP
+# exit_if_error $?
 
-# ========================================
-# build list of filenames for ICA
-# ========================================
-message "DBM-LIST"
-$FPATH_SCRIPT dbm-list \
-	$DPATH_OUT_DBM \
-	$FPATH_DBM_LIST \
-	--overwrite | tee $FPATH_TMP
-exit_if_error $?
+# COHORT_ID_DBM_LIST=$(grep COHORT_ID ${FPATH_TMP} | awk -F '=' '{ print $2 }' ) \
 
-COHORT_ID_DBM_LIST=$(grep COHORT_ID ${FPATH_TMP} | awk -F '=' '{ print $2 }' ) \
+# if [ $COHORT_ID_DBM_LIST != $COHORT_ID_BIDS_LIST ]
+# then
+# 	message "COHORT ID CHANGED TO ${COHORT_ID_DBM_LIST} AFTER GENERATING DBM LIST"
+# fi
 
-if [ $COHORT_ID_DBM_LIST != $COHORT_ID_BIDS_LIST ]
-then
-	message "COHORT ID CHANGED TO ${COHORT_ID_DBM_LIST} AFTER GENERATING DBM LIST"
-fi
+# message "COPYING"
+# FPATH_DBM_LIST_COHORT=$DPATH_OUT_ICA/dbm_list-$COHORT_ID_DBM_LIST.txt
+# cp -v $FPATH_DBM_LIST $FPATH_DBM_LIST_COHORT
+# exit_if_error $?
 
-message "COPYING"
-FPATH_DBM_LIST_COHORT=$DPATH_OUT_ICA/dbm_list-$COHORT_ID_DBM_LIST.txt
-cp -v $FPATH_DBM_LIST $FPATH_DBM_LIST_COHORT
-exit_if_error $?
-
-# ========================================
-# check if ICA results exist
-# ========================================
-DIM="30"
-# DIMEST="lap" # 'lap', 'bic', 'mdl', 'aic', 'mean'
-# SHUFFLE="y" # shuffles if non-empty
-SEP_SUFFIX="-"
-if [[ ! (-z $DIM || -z $DIMEST) ]]
-then
-	message "Only one of DIM and DIMEST can be set (got $DIM and $DIMEST)"
-elif [ ! -z $DIM ]
-then
-	DIM_FLAG="--dim $DIM"
-	ICA_SUFFIX="${SEP_SUFFIX}${DIM}"
-elif [ ! -z $DIMEST ]
-then
-	DIM_FLAG="--dimest $DIMEST"
-	ICA_SUFFIX="${SEP_SUFFIX}${DIMEST}"
-fi
-if [ ! -z $SHUFFLE ]
-then
-	ICA_SUFFIX="${ICA_SUFFIX}_shuffle"
-	SHUFFLE_FLAG='--shuffle'
-fi
-DPATH_ICA_RESULTS="${DPATH_OUT_ICA}/${ICA_RESULTS_PREFIX}${COHORT_ID_DBM_LIST}${ICA_SUFFIX}"
-if [[ ! -d $DPATH_ICA_RESULTS || -z "$(ls -A ${DPATH_ICA_RESULTS})" ]]
-then
+# # ========================================
+# # check if ICA results exist
+# # ========================================
+# DIM="30"
+# # DIMEST="lap" # 'lap', 'bic', 'mdl', 'aic', 'mean'
+# # SHUFFLE="y" # shuffles if non-empty
+# SEP_SUFFIX="-"
+# if [[ ! (-z $DIM || -z $DIMEST) ]]
+# then
+# 	message "Only one of DIM and DIMEST can be set (got $DIM and $DIMEST)"
+# elif [ ! -z $DIM ]
+# then
+# 	DIM_FLAG="--dim $DIM"
+# 	ICA_SUFFIX="${SEP_SUFFIX}${DIM}"
+# elif [ ! -z $DIMEST ]
+# then
+# 	DIM_FLAG="--dimest $DIMEST"
+# 	ICA_SUFFIX="${SEP_SUFFIX}${DIMEST}"
+# fi
+# if [ ! -z $SHUFFLE ]
+# then
+# 	ICA_SUFFIX="${ICA_SUFFIX}_shuffle"
+# 	SHUFFLE_FLAG='--shuffle'
+# fi
+# DPATH_ICA_RESULTS="${DPATH_OUT_ICA}/${ICA_RESULTS_PREFIX}${COHORT_ID_DBM_LIST}${ICA_SUFFIX}"
+# if [[ ! -d $DPATH_ICA_RESULTS || -z "$(ls -A ${DPATH_ICA_RESULTS})" ]]
+# then
 	
-	# run ICA
-	message "ICA results not found. Computing now (this might take a while)."
-	${FPATH_SCRIPT} ica \
-		${FPATH_DBM_LIST_COHORT} \
-		${DPATH_OUT_DBM} \
-		${DPATH_ICA_RESULTS} \
-		${DIM_FLAG} \
-		${SHUFFLE_FLAG} \
-		--overwrite \
-		--logfile ${DPATH_ICA_RESULTS}/ica.log
-	exit_if_error $?
+# 	# run ICA
+# 	message "ICA results not found. Computing now (this might take a while)."
+# 	${FPATH_MRI_CODE} ica \
+# 		${FPATH_DBM_LIST_COHORT} \
+# 		${DPATH_OUT_DBM} \
+# 		${DPATH_ICA_RESULTS} \
+# 		${DIM_FLAG} \
+# 		${SHUFFLE_FLAG} \
+# 		--overwrite \
+# 		--logfile ${DPATH_ICA_RESULTS}/ica.log
+# 	exit_if_error $?
 
-else
-	message "Found ICA results!"
-fi
+# else
+# 	message "Found ICA results!"
+# fi
 
-message "COPYING COHORT FILES"
-cp $FPATH_PROC_STATUS_COHORT $FPATH_DBM_LIST_COHORT $DPATH_ICA_RESULTS
+# message "COPYING COHORT FILES"
+# cp $FPATH_PROC_STATUS_COHORT $FPATH_DBM_LIST_COHORT $DPATH_ICA_RESULTS
 
-echo "FPATH_PROC_STATUS_COHORT=${FPATH_PROC_STATUS_COHORT}"
-echo "FPATH_DBM_LIST_COHORT=${FPATH_DBM_LIST_COHORT}"
-echo "DPATH_ICA_RESULTS=${DPATH_ICA_RESULTS}"
-echo "FINAL_COHORT_ID=${COHORT_ID_DBM_LIST}"
+# echo "FPATH_PROC_STATUS_COHORT=${FPATH_PROC_STATUS_COHORT}"
+# echo "FPATH_DBM_LIST_COHORT=${FPATH_DBM_LIST_COHORT}"
+# echo "DPATH_ICA_RESULTS=${DPATH_ICA_RESULTS}"
+# echo "FINAL_COHORT_ID=${COHORT_ID_DBM_LIST}"
 
 # ========================================
 # delete temp file
 # ========================================
 rm $FPATH_TMP
+
+# return to original directory
+cd $DPATH_INITIAL
