@@ -7,12 +7,11 @@
 
 # settings (change or comment out as needed)
 # required
-DPATH_TEMPLATE="/ipl/quarantine/models/icbm152_model_09c"
-TEMPLATE="mni_icbm152_t1_tal_nlin_sym_09c"
+# FLAG_DPATH_TEMPLATE="--template-dir /ipl/quarantine/models/icbm152_model_09c"
+# FLAG_TEMPLATE="--template mni_icbm152_t1_tal_nlin_sym_09c"
 # optional
-FLAG_OVERWRITE="--overwrite"
 # FLAG_DRY_RUN="--dry-run"
-FLAG_OUTPUT="--output-dir output-asym"
+# FLAG_OUTPUT="--output-dir output-asym"
 
 FPATH_DOTENV=".env" # relative to current directory
 
@@ -44,10 +43,10 @@ source $FPATH_DOTENV
 COMMAND_POST_RUN=" \
     $FPATH_MRI_CODE post-run \
         $DPATH_OUT_DBM \
-        --template-dir $DPATH_TEMPLATE \
-        --template $TEMPLATE \
+        $FLAG_DPATH_TEMPLATE \
+        $FLAG_TEMPLATE \
         $DATASET_TAG_FLAG \
-        $FLAG_OVERWRITE \
+        $FLAG_OUTPUT \
         $FLAG_DRY_RUN \
 "
 echo $COMMAND_POST_RUN

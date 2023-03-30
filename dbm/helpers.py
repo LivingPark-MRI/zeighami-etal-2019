@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import traceback
@@ -26,6 +27,8 @@ EXT_TRANSFORM = ".xfm"
 EXT_TAR = ".tar"
 SUFFIX_T1 = "T1w"
 SEP_SUFFIX = "-"
+
+DNAME_NIHPD = "nihpd_pipeline"
 
 def add_suffix(
     path: Union[Path, str],
@@ -53,6 +56,7 @@ def add_suffix(
 def load_list(fpath: Path | str, names=None) -> pd.DataFrame:
     return pd.read_csv(fpath, header=None, dtype=str, names=names)
 
+
 def requires_program(func, program, program_name=None):
 
     if program_name is None:
@@ -71,11 +75,26 @@ def requires_program(func, program, program_name=None):
         
     return _requires_program
 
+
 def require_minc(func):
     return requires_program(func, 'mincinfo', 'MINC tools')
 
+
 def require_python2(func):
     return requires_program(func, 'python2', 'Python 2')
+
+
+def check_nihpd_pipeline(dpath_pipeline):
+
+    fpath_to_source: Path = dpath_pipeline / "init.sh"
+    if not Path(fpath_to_source).exists():
+        raise FileNotFoundError(fpath_to_source)
+    
+    pythonpath = os.environ.get('PYTHONPATH')
+    if (pythonpath is None) or not DNAME_NIHPD in pythonpath:
+        raise RuntimeError(
+            "PYTHONPATH environment variable not set correctly. "
+            f"Make sure to source {fpath_to_source} before running")
 
 def process_path(path: str) -> Path:
     return Path(path).expanduser().resolve()
@@ -123,6 +142,7 @@ def add_helper_options():
         ),
     ]
     return add_options(common_options)
+
 
 def add_silent_option():
     return add_options([

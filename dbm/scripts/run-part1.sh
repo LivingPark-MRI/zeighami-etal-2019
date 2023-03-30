@@ -2,22 +2,19 @@
 
 ##################################################
 # RUN DBM (PART 1)
-# * pre-run     convert Nifti files to MINC and create input list for pipeline
+# * pre-run     convert DICOMs to MINC and create input list for pipeline
 # * run         run MINC pipeline
 ##################################################
 
-# settings (change or comment out as needed)
-# required
-DPATH_PIPELINE="/ipl/quarantine/experimental/2013-02-15"
-DPATH_TEMPLATE="/ipl/quarantine/models/icbm152_model_09c"
-TEMPLATE="mni_icbm152_t1_tal_nlin_sym_09c"
-# TEMPLATE="mni_icbm152_t1_tal_nlin_asym_09c"
-# optional
-# FLAG_SGE_QUEUE="--queue origami.q"
+# optional settings (uncomment and change if needed)
+# FLAG_DPATH_PIPELINE="--pipeline-dir /ipl/quarantine/experimental/2013-02-15"
+# FLAG_DPATH_TEMPLATE="--template-dir /ipl/quarantine/models/icbm152_model_09c"
+# FLAG_TEMPLATE="--template mni_icbm152_t1_tal_nlin_sym_09c"
+FLAG_SGE_QUEUE="--queue origami.q"
 # FLAG_OVERWRITE="--overwrite"
 # FLAG_DRY_RUN="--dry-run"
 # FLAG_INPUT="--minc-input-dir input"
-# FLAG_OUTPUT="--output-dir output-asym"
+# FLAG_OUTPUT="--output-dir output"
 
 FPATH_DOTENV=".env" # relative to current directory
 
@@ -51,6 +48,7 @@ COMMAND_PRE_RUN=" \
     $FPATH_MRI_CODE pre-run \
         $DPATH_OUT_DBM \
         $DATASET_TAG_FLAG \
+        $FLAG_DPATH_PIPELINE \
         $FLAG_INPUT \
         $FLAG_OVERWRITE \
         $FLAG_DRY_RUN \
@@ -70,9 +68,9 @@ COMMAND_RUN=" \
     $FPATH_MRI_CODE run \
     $DPATH_OUT_DBM \
     $DATASET_TAG_FLAG \
-    --pipeline-dir $DPATH_PIPELINE \
-    --template-dir $DPATH_TEMPLATE \
-    --template $TEMPLATE \
+    $FLAG_DPATH_PIPELINE \
+    $FLAG_DPATH_TEMPLATE \
+    $FLAT_TEMPLATE \
     $FLAG_SGE_QUEUE \
     $FLAG_OUTPUT \
     $FLAG_DRY_RUN \
