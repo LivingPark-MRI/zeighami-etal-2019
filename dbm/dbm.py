@@ -13,40 +13,52 @@ import pandas as pd
 from livingpark_utils.dataset.ppmi import cohort_id as get_cohort_id
 from livingpark_utils.zeighamietal.constants import COL_PAT_ID, COL_VISIT_TYPE
 
+from dbm_old_pipeline import (
+    FNAME_CONTAINER, 
+    run_old_from_minc_list, 
+    TRACKER_CONFIGS_OLD_PIPELINE,
+    QC_FILE_PATTERNS_OLD_PIPELINE,
+)
+
 from helpers import (
     add_helper_options,
     add_silent_option,
     add_suffix,
     callback_path,
     check_nihpd_pipeline,
+    check_program,
+    DEFAULT_NLR_LEVEL,  # for tracking
+    DEFAULT_DBM_FWHM,
     DNAME_NIHPD,
     EXT_GZIP,
     EXT_MINC,
     EXT_NIFTI,
     EXT_TAR,
     load_list,
+    minc_qc,
     require_minc,
-    require_python2,
     ScriptHelper,
+    SEP_SUFFIX,
+    SUFFIX_TEMPLATE_MASK,
+    SUFFIX_TEMPLATE_OUTLINE,
     # SUFFIX_T1,
     with_helper,
 )
 
-
 from tracker import (
     KW_PHASE, 
     KW_PIPELINE_COMPLETE, 
-    tracker_configs, 
+    TRACKER_CONFIGS, 
     SUCCESS,
     # UNAVAILABLE,
 )
 
 # default settings
-# DEFAULT_RESET_CACHE = False
-# DEFAULT_FNAME_CACHE = ".bidslayout"
-# DEFAULT_FNAME_BIDS_LIST = "bids_list-all.csv"
-# DEFAULT_FNAME_BIDS_LIST_FILTERED = "bids_list.csv"
-# DEFAULT_FNAME_BAD_SCANS = "bad_scans.csv"
+DEFAULT_RESET_CACHE = False
+DEFAULT_FNAME_CACHE = ".bidslayout"
+DEFAULT_FNAME_BIDS_LIST = "bids_list-all.csv"
+DEFAULT_FNAME_BIDS_LIST_FILTERED = "bids_list.csv"
+DEFAULT_FNAME_BAD_SCANS = "bad_scans.csv"
 DEFAULT_FNAME_ENV = ".env"
 DEFAULT_DPATH_PIPELINE=Path("/", "ipl", "quarantine", "experimental", "2013-02-15")
 DEFAULT_DPATH_TEMPLATE=Path("/", "ipl", "quarantine", "models", "icbm152_model_09c")
@@ -55,7 +67,6 @@ DEFAULT_SGE_QUEUE="origami.q"
 DEFAULT_DNAME_INPUT = "input"
 DEFAULT_DNAME_OUTPUT = "output"
 DEFAULT_DNAME_TAR = "tarballs"
-# DEFAULT_FNAME_LONI = "idaSearch.csv"
 DEFAULT_FNAME_MINCIGNORE = "mincignore.csv"
 DEFAULT_FNAME_MINC_LIST = "minc_list.csv"
 DEFAULT_FNAME_STATUS = "status.csv"
@@ -71,7 +82,7 @@ COL_BIDS_SESSION = "session"
 # FNAME_CONTAINER = "nd-minc_1_9_16-fsl_5_0_11-click_livingpark_pandas_pybids.sif" # TODO remove (?)
 DNAME_SRC = "src"
 FNAME_CLI = "dbm.py"
-# DNAME_SCRIPTS = "scripts"
+DNAME_SCRIPTS = "scripts"
 
 # tagged filename patterns
 # PATTERN_BIDS_LIST_FILTERED = "bids_list-{}.csv"
@@ -85,14 +96,12 @@ DNAME_DICOM_INPUT = "dicom"
 DNAME_MINC_INPUT = "minc"
 DPATH_DICOM_TO_SUBJECT = Path('PPMI')
 COL_IMAGE_ID = "Image ID"
-# COL_LONI_SUBJECT = "Subject ID"
-# COL_LONI_SESSION = "Visit"
-# COL_LONI_IMAGE = "Image ID"
 COHORT_SESSION_MAP = {"BL": "1"}
-# LONI_SESSION_MAP = {"Baseline": "1"}
 
 # DBM
 COMMAND_PYTHON2 = "python2"
+SUFFIX_OLD_PIPELINE = "_old_pipeline"
+DNAME_JOB_LOGS = "jobs"
 
 # DBM post
 DNAME_VBM = "vbm"
@@ -106,8 +115,6 @@ PATTERN_QC_LINEAR2 = "qc_stx2_t1_{}_{}.jpg"
 PATTERN_QC_NONLINEAR = "qc_nl_t1_{}_{}.jpg"
 FNAME_MASK = f"mask{EXT_MINC}"
 SUFFIX_MASKED = "masked"
-SUFFIX_TEMPLATE_MASK = "_mask" # for MNI template
-SUFFIX_TEMPLATE_OUTLINE = "_outline" # for MNI template
 
 # DBM status
 TAG_MISSING = "missing"
@@ -519,13 +526,14 @@ def pre_run(
               help=f"Path to MNI template (MINC). Default: {DEFAULT_DPATH_TEMPLATE}")
 @click.option("--template", default=DEFAULT_TEMPLATE,
               help=f"MNI template name. Default: {DEFAULT_TEMPLATE}")
+@click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--sge/--no-sge", "with_sge", default=True)
 @click.option("-q", "--queue", "sge_queue", default=DEFAULT_SGE_QUEUE)
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
+@click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT)
 @add_helper_options()
 @with_helper
 @require_minc
-@require_python2
 def run(
     helper: ScriptHelper,
     dpath_dbm: Path,
@@ -534,54 +542,81 @@ def run(
     dpath_pipeline: Path,
     dpath_template: Path,
     template,
+    use_old_pipeline,
+    dname_qc,
     with_sge,
     sge_queue,
 ):
 
     if tag is None:
-        fname_input_list = DEFAULT_FNAME_MINC_LIST
+        fname_minc_list = DEFAULT_FNAME_MINC_LIST
     else:
-        fname_input_list = PATTERN_MINC_LIST.format(tag)
-    fpath_input_list = dpath_dbm / fname_input_list
-    
-    # validate paths
-    fpath_pipeline: Path = dpath_pipeline / DNAME_NIHPD / "python" / "iplLongitudinalPipeline.py"
-    fpath_template = Path(dpath_template, template).with_suffix(EXT_MINC)
-    for fpath in (fpath_input_list, fpath_pipeline, fpath_template):
-        if not fpath.exists():
-            raise RuntimeError(f"File not found: {fpath}")
-    
-    check_nihpd_pipeline(dpath_pipeline)
+        fname_minc_list = PATTERN_MINC_LIST.format(tag)
+    fpath_minc_list = dpath_dbm / fname_minc_list
 
-    # need to write a local copy of the MINC script to make sure it uses Python 2
-    # otherwise if the user has Python 3 installed it will take precedence
-    # and the script will fail
-    fpath_pipeline_orig = fpath_pipeline
-    fpath_pipeline = dpath_dbm / fpath_pipeline_orig.name
-    shutil.copy2(fpath_pipeline_orig, fpath_pipeline)
-    with fpath_pipeline.open() as file:
-        file_content = file.read()
-    file_content = file_content.replace("python", COMMAND_PYTHON2)
-    with fpath_pipeline.open('w') as file:
-        file.write(file_content)
+    if use_old_pipeline:
+        dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
 
     dpath_output = dpath_dbm / dname_output
     helper.mkdir(dpath_output, exist_ok=True)
 
-    command = [
-        COMMAND_PYTHON2, fpath_pipeline,
-        "--list", fpath_input_list,
-        "--output-dir", dpath_output,
-        "--model-dir", dpath_template,
-        "--model-name", template,
-        "--lngcls",
-        "--denoise",
-        "--run",
-    ]
-    if with_sge:
-        command.extend(["--sge", "--queue", sge_queue])
-    # print(' '.join([str(c) for c in command]))
-    helper.run_command(command)
+    if use_old_pipeline:
+        helper.print_info('RUNNING OLD PIPELINE', text_color='yellow')
+        helper.print_info(f'Using output directory: {dpath_output}')
+
+        if not with_sge:
+            raise NotImplementedError("Must use SGE for old pipeline")
+        
+        dpath_job_logs = dpath_dbm / DNAME_JOB_LOGS
+        df_minc_list = pd.read_csv(fpath_minc_list, header=None, dtype=str)
+        run_old_from_minc_list(
+            helper=helper, 
+            df_minc_list=df_minc_list,
+            dpath_dbm=dpath_dbm,
+            dpath_out=dpath_output,
+            dname_qc=dname_qc,
+            dpath_job_logs=dpath_job_logs,
+            sge_queue=sge_queue,
+            template=template,
+        )
+    else:
+        check_program("python2", "Python 2")
+    
+        # validate paths
+        fpath_pipeline: Path = dpath_pipeline / DNAME_NIHPD / "python" / "iplLongitudinalPipeline.py"
+        fpath_template = Path(dpath_template, template).with_suffix(EXT_MINC)
+        for fpath in (fpath_minc_list, fpath_pipeline, fpath_template):
+            if not fpath.exists():
+                raise RuntimeError(f"File not found: {fpath}")
+        
+        check_nihpd_pipeline(dpath_pipeline)
+
+        # need to write a local copy of the MINC script to make sure it uses Python 2
+        # otherwise if the user has Python 3 installed it will take precedence
+        # and the script will fail
+        fpath_pipeline_orig = fpath_pipeline
+        fpath_pipeline = dpath_dbm / fpath_pipeline_orig.name
+        shutil.copy2(fpath_pipeline_orig, fpath_pipeline)
+        with fpath_pipeline.open() as file:
+            file_content = file.read()
+        file_content = file_content.replace("python", COMMAND_PYTHON2)
+        with fpath_pipeline.open('w') as file:
+            file.write(file_content)
+
+        command = [
+            COMMAND_PYTHON2, fpath_pipeline,
+            "--list", fpath_minc_list,
+            "--output-dir", dpath_output,
+            "--model-dir", dpath_template,
+            "--model-name", template,
+            "--lngcls",
+            "--denoise",
+            "--run",
+        ]
+        if with_sge:
+            command.extend(["--sge", "--queue", sge_queue])
+        # print(' '.join([str(c) for c in command]))
+        helper.run_command(command)
 
 
 @cli.command()
@@ -610,19 +645,7 @@ def post_run(
 ):
 
     def create_qc_image(fpath, fpath_qc, fpath_mask, title):
-        helper.run_command(
-            [
-                "minc_qc.pl",
-                fpath,
-                fpath_qc,
-                "--title", title,
-                "--image-range", 0, 120,
-                "--mask", fpath_mask,
-                "--big",
-                "--clamp",
-            ],
-            silent=silent,
-        )
+        return minc_qc(helper, fpath, fpath_qc, fpath_mask, title, silent=silent)
     
     fpath_mask = add_suffix(dpath_template / template, SUFFIX_TEMPLATE_MASK, sep=None).with_suffix(EXT_MINC)
     fpath_outline = add_suffix(dpath_template / template, SUFFIX_TEMPLATE_OUTLINE, sep=None).with_suffix(EXT_MINC)
@@ -725,6 +748,7 @@ def post_run(
 @click.argument("dpath_dbm", callback=callback_path)
 @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
+@click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--write-new-list/--no-write-new-list", default=True)
 @add_helper_options()
 @with_helper
@@ -733,6 +757,7 @@ def status(
     dpath_dbm: Path,
     tag,
     dname_output,
+    use_old_pipeline,
     write_new_list,
 ):
     
@@ -744,14 +769,28 @@ def status(
     else:
         fname_input_list = PATTERN_MINC_LIST.format(tag)
         fname_status = PATTERN_STATUS.format(tag)
+            
+    if use_old_pipeline:
+        fname_status = add_suffix(fname_status, SUFFIX_OLD_PIPELINE, sep=None)
+        dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
+        tracker_configs = TRACKER_CONFIGS_OLD_PIPELINE
+        kwargs_tracking = {
+            'nlr_level': DEFAULT_NLR_LEVEL, # just use defaults
+            'dbm_fwhm': DEFAULT_DBM_FWHM,
+        }
+    else:
+        tracker_configs = TRACKER_CONFIGS
+        kwargs_tracking = {}
+
     fpath_input_list = dpath_dbm / fname_input_list
     fpath_status = dpath_dbm / fname_status
-    
     helper.check_file(fpath_status)
 
     data_status = []
     for subject, session, input_t1w in load_list(fpath_input_list).itertuples(index=False):
     
+        kwargs_tracking['prefix'] = Path(input_t1w).stem
+
         statuses_subject = {
             COL_BIDS_SUBJECT: subject,
             COL_BIDS_SESSION: session,
@@ -760,10 +799,10 @@ def status(
 
         dpath_subject = dpath_dbm / dname_output / subject
         statuses_subject.update({
-            phase: phase_func(dpath_subject, session)
+            phase: phase_func(dpath_subject, session, **kwargs_tracking)
             for phase, phase_func in tracker_configs[KW_PHASE].items()
         })
-        statuses_subject[KW_PIPELINE_COMPLETE] = tracker_configs[KW_PIPELINE_COMPLETE](dpath_subject, session)
+        statuses_subject[KW_PIPELINE_COMPLETE] = tracker_configs[KW_PIPELINE_COMPLETE](dpath_subject, session, **kwargs_tracking)
 
         data_status.append(statuses_subject)
 
@@ -776,6 +815,8 @@ def status(
 
     if write_new_list:
         fpath_new_list = add_suffix(fpath_input_list, TAG_MISSING) # TODO TAG_MISSING in option (?)
+        if use_old_pipeline:
+            fpath_new_list = add_suffix(fpath_new_list, SUFFIX_OLD_PIPELINE, sep=None)
         df_new_list = df_status.loc[
             df_status[KW_PIPELINE_COMPLETE] != SUCCESS,
             [COL_BIDS_SUBJECT, COL_BIDS_SESSION, col_input_t1w],
@@ -790,6 +831,7 @@ def status(
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
 @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
+@click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--tarball-dir", "dname_tar", default=DEFAULT_DNAME_TAR)
 @add_silent_option()
@@ -799,10 +841,13 @@ def tar(
     helper: ScriptHelper,
     dpath_dbm: Path,
     tag,
+    use_old_pipeline,
     dname_output,
     dname_tar,
     silent,
 ):
+    if use_old_pipeline:
+        dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
     
     if tag is None:
         fname_status = DEFAULT_FNAME_STATUS
@@ -827,8 +872,17 @@ def tar(
 
     data_file_info = []
     for subject, session in df_status_success[[COL_BIDS_SUBJECT, COL_BIDS_SESSION]].itertuples(index=False):
-        dpath_vbm = dpath_output / subject / session / DNAME_VBM
-        fpath_dbm_file = add_suffix(dpath_vbm / PATTERN_DBM_FILE.format(subject, session), SUFFIX_MASKED).with_suffix(f'{EXT_NIFTI}{EXT_GZIP}')
+
+        if use_old_pipeline:
+            dpath_results_session: Path = dpath_output / subject / session
+            fpaths_tmp = [fpath for fpath in dpath_results_session.iterdir() if fpath.suffix in [EXT_NIFTI, EXT_GZIP]]
+            if len(fpaths_tmp) != 1:
+                raise RuntimeError(f'Expected exaclty 1 DBM file in {dpath_results_session}, but got: {fpaths_tmp}')
+            else:
+                fpath_dbm_file = fpaths_tmp[0]
+        else:
+            dpath_vbm = dpath_output / subject / session / DNAME_VBM
+            fpath_dbm_file = add_suffix(dpath_vbm / PATTERN_DBM_FILE.format(subject, session), SUFFIX_MASKED).with_suffix(f'{EXT_NIFTI}{EXT_GZIP}')
 
         if not fpath_dbm_file.exists():
             raise RuntimeError(f'File not found: {fpath_dbm_file}')
@@ -887,8 +941,8 @@ def init_env(
     constants["DPATH_MRI_SCRIPTS"] = constants["DPATH_MRI_CODE"] / DNAME_SCRIPTS
 
     # MRI output
-    constants["DPATH_OUT"] = constants["DPATH_ROOT"] / INIT_DNAME_OUT
-    constants["DPATH_OUT_DBM"] = constants["DPATH_OUT"] / INIT_DNAME_OUT_DBM
+    # constants["DPATH_OUT"] = constants["DPATH_ROOT"] / INIT_DNAME_OUT
+    # constants["DPATH_OUT_DBM"] = constants["DPATH_OUT"] / INIT_DNAME_OUT_DBM
     constants["FPATH_BIDS_LIST"] = constants["DPATH_OUT_DBM"] / DEFAULT_FNAME_BIDS_LIST
     constants["FPATH_BIDS_LIST_FILTERED"] = constants["DPATH_OUT_DBM"] / DEFAULT_FNAME_BIDS_LIST_FILTERED
 
@@ -912,6 +966,7 @@ def init_env(
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
 @click.argument("sessions", nargs=-1)
+@click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT)
 @add_helper_options()
@@ -920,15 +975,22 @@ def qc(
     helper: ScriptHelper, 
     dpath_dbm: Path, 
     sessions, 
+    use_old_pipeline,
     dname_output, 
     dname_qc, 
 ):
+    if use_old_pipeline:
+        qc_file_patterns = QC_FILE_PATTERNS_OLD_PIPELINE
+        dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
+        dname_qc = add_suffix(dname_qc, SUFFIX_OLD_PIPELINE, sep=None)
+    else:
+        qc_file_patterns = QC_FILE_PATTERNS
 
     if len(sessions) == 0:
         sessions = DEFAULT_QC_SESSIONS
 
     dpath_output = dpath_dbm / dname_output
-    dpath_qc_out = dpath_dbm / dname_qc
+    dpath_qc_out: Path = dpath_dbm / dname_qc
 
     helper.mkdir(dpath_qc_out, exist_ok=True)
 
@@ -936,12 +998,12 @@ def qc(
     for dpath_subject in dpaths_subject:
         subject = dpath_subject.name
 
-        dpath_subject_qc = dpath_subject / "qc"
+        dpath_subject_qc = dpath_subject / DNAME_QC
 
         for session in sessions:
 
             count = 0
-            for step, pattern in QC_FILE_PATTERNS.items():
+            for step, pattern in qc_file_patterns.items():
                 fpath_qc = Path(dpath_subject_qc, pattern.format(subject, session))
 
                 if fpath_qc.exists():
@@ -951,9 +1013,9 @@ def qc(
                     fpath_qc_link.symlink_to(fpath_qc)
                     count += 1
 
-            if count < len(QC_FILE_PATTERNS):
+            if count < len(qc_file_patterns):
                 helper.print_info(
-                    f"Missing {len(QC_FILE_PATTERNS) - count} QC file(s) "
+                    f"Missing {len(qc_file_patterns) - count} QC file(s) "
                     f"for subject {subject}, session {session}"
                 )
         

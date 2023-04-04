@@ -33,6 +33,7 @@ def build_filenames(subject_dir, session_id, results_subdir, patterns: Iterable[
     ]
     return results_dir, result_filenames
 
+
 def check_files(results_dir, result_filenames):
     if isinstance(result_filenames, (os.PathLike, str)):
         result_filenames = [result_filenames]
@@ -58,6 +59,7 @@ def check_files(results_dir, result_filenames):
     else:
         return INCOMPLETE
     
+
 def check_results(subject_dir, session_id, results_subdir, patterns: Iterable[str]):
     results_dir, result_filenames = build_filenames(
         subject_dir=subject_dir, 
@@ -67,7 +69,8 @@ def check_results(subject_dir, session_id, results_subdir, patterns: Iterable[st
     )
     return check_files(results_dir=results_dir, result_filenames=result_filenames)
 
-def check_preprocessing(subject_dir, session_id):
+
+def check_preprocessing(subject_dir, session_id, **kwargs):
     return check_results(
         subject_dir=subject_dir,
         session_id=session_id,
@@ -76,8 +79,9 @@ def check_preprocessing(subject_dir, session_id):
             "clp_{}_{}" + SUFFIX_MASK,
             "clp_{}_{}" + SUFFIX_T1_MNC,
         ])
-    
-def check_linear_registration1(subject_dir, session_id):
+
+
+def check_linear_registration1(subject_dir, session_id, **kwargs):
     return check_results(
         subject_dir=subject_dir,
         session_id=session_id,
@@ -92,7 +96,7 @@ def check_linear_registration1(subject_dir, session_id):
         ])
 
 
-def check_linear_registration2(subject_dir, session_id):
+def check_linear_registration2(subject_dir, session_id, **kwargs):
     return check_results(
         subject_dir=subject_dir,
         session_id=session_id,
@@ -103,7 +107,8 @@ def check_linear_registration2(subject_dir, session_id):
             "stx2_{}_{}" + SUFFIX_T1_XFM,
         ])
 
-def check_nonlinear_registration(subject_dir, session_id):
+
+def check_nonlinear_registration(subject_dir, session_id, **kwargs):
     return check_results(
         subject_dir=subject_dir,
         session_id=session_id,
@@ -113,7 +118,8 @@ def check_nonlinear_registration(subject_dir, session_id):
             "nl_{}_{}" + EXT_TRANSFORM,
         ])
 
-def check_dbm(subject_dir, session_id):
+
+def check_dbm(subject_dir, session_id, **kwargs):
     return check_results(
         subject_dir=subject_dir,
         session_id=session_id,
@@ -122,7 +128,8 @@ def check_dbm(subject_dir, session_id):
             "vbm_jac_{}_{}" + EXT_MINC,
         ])
 
-def check_dbm_nii(subject_dir, session_id):
+
+def check_dbm_nii(subject_dir, session_id, **kwargs):
     return check_results(
         subject_dir=subject_dir,
         session_id=session_id,
@@ -132,7 +139,7 @@ def check_dbm_nii(subject_dir, session_id):
             "vbm_jac_{}_{}" + SUFFIX_DBM_NII,
         ])
 
-tracker_configs = {
+TRACKER_CONFIGS = {
     KW_PIPELINE_COMPLETE: check_dbm_nii,
     KW_PHASE: {
         "preprocessing": check_preprocessing,

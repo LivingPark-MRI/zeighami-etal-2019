@@ -22,7 +22,7 @@ output*
 mincignore*
 minc_list*
 status*
-qc
+qc*
 tarballs
 out*
 bad_scans*.csv
