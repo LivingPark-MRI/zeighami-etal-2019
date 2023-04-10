@@ -6,8 +6,8 @@ import shutil
 import click
 import pandas as pd
 
-# from bids import BIDSLayout
-# from bids.layout import parse_file_entities
+from bids import BIDSLayout
+from bids.layout import parse_file_entities
 
 # import livingpark_utils
 from livingpark_utils.dataset.ppmi import cohort_id as get_cohort_id
@@ -41,7 +41,7 @@ from helpers import (
     SEP_SUFFIX,
     SUFFIX_TEMPLATE_MASK,
     SUFFIX_TEMPLATE_OUTLINE,
-    # SUFFIX_T1,
+    SUFFIX_T1,
     with_helper,
 )
 
@@ -56,9 +56,9 @@ from tracker import (
 # default settings
 DEFAULT_RESET_CACHE = False
 DEFAULT_FNAME_CACHE = ".bidslayout"
-DEFAULT_FNAME_BIDS_LIST = "bids_list-all.csv"
-DEFAULT_FNAME_BIDS_LIST_FILTERED = "bids_list.csv"
-DEFAULT_FNAME_BAD_SCANS = "bad_scans.csv"
+# DEFAULT_FNAME_BIDS_LIST = "bids_list-all.csv"
+# DEFAULT_FNAME_BIDS_LIST_FILTERED = "bids_list.csv"
+# DEFAULT_FNAME_BAD_SCANS = "bad_scans.csv"
 DEFAULT_FNAME_ENV = ".env"
 DEFAULT_DPATH_PIPELINE=Path("/", "ipl", "quarantine", "experimental", "2013-02-15")
 DEFAULT_DPATH_TEMPLATE=Path("/", "ipl", "quarantine", "models", "icbm152_model_09c")
@@ -85,18 +85,23 @@ FNAME_CLI = "dbm.py"
 DNAME_SCRIPTS = "scripts"
 
 # tagged filename patterns
-# PATTERN_BIDS_LIST_FILTERED = "bids_list-{}.csv"
+PATTERN_BIDS_LIST_FILTERED = "bids_list-{}.csv"
 PATTERN_COHORT = "zeighami-etal-2019-cohort-{}.csv"
 PATTERN_MINC_LIST = "minc_list-{}.csv"
 PATTERN_STATUS = "status-{}.csv"
 PATTERN_TAR = "dbm_results-{}" # without extension
 
+# BIDS list
+FNAME_BIDS_LIST = "bids_list.csv"
+
 # DBM pre
 DNAME_DICOM_INPUT = "dicom"
 DNAME_MINC_INPUT = "minc"
+DNAME_NIFTI_INPUT = "nifti"
 DPATH_DICOM_TO_SUBJECT = Path('PPMI')
 COL_IMAGE_ID = "Image ID"
 COHORT_SESSION_MAP = {"BL": "1"}
+SUFFIX_FROM_NIFTI = "_from_nifti"
 
 # DBM
 COMMAND_PYTHON2 = "python2"
@@ -137,60 +142,53 @@ def cli():
     return
 
 
-# @cli.command()
-# @click.argument("dpath_dbm", callback=callback_path)
-# @click.argument("dpath_bids", type=str, callback=callback_path)
-# @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
-# @click.option("--reset-cache/--use-cache", type=bool, default=DEFAULT_RESET_CACHE,
-#               help=f"Whether to overwrite the pyBIDS database file. Default: {DEFAULT_RESET_CACHE}")
-# @click.option("--fname-cache", type=str, default=DEFAULT_FNAME_CACHE,
-#               help=f"Name of pyBIDS database file. Default: {DEFAULT_FNAME_CACHE}")
-# @add_helper_options()
-# @with_helper
-# def bids_list(
-#     helper: ScriptHelper,
-#     dpath_dbm: Path,
-#     dpath_bids: Path,
-#     tag: str, 
-#     reset_cache: bool, 
-#     fname_cache: str, 
-# ):
+@cli.command()
+@click.argument("dpath_dbm", callback=callback_path)
+@click.argument("dpath_bids", type=str, callback=callback_path)
+@click.option("--reset-cache/--use-cache", type=bool, default=DEFAULT_RESET_CACHE,
+              help=f"Whether to overwrite the pyBIDS database file. Default: {DEFAULT_RESET_CACHE}")
+@click.option("--fname-cache", type=str, default=DEFAULT_FNAME_CACHE,
+              help=f"Name of pyBIDS database file. Default: {DEFAULT_FNAME_CACHE}")
+@add_helper_options()
+@with_helper
+def bids_list(
+    helper: ScriptHelper,
+    dpath_dbm: Path,
+    dpath_bids: Path,
+    reset_cache: bool, 
+    fname_cache: str, 
+):
 
-#     # make sure input directory exists
-#     if not dpath_bids.exists():
-#         helper.print_error(f"BIDS directory not found: {dpath_bids}")
+    # make sure input directory exists
+    if not dpath_bids.exists():
+        helper.print_error(f"BIDS directory not found: {dpath_bids}")
 
-#     # check if file exists
-#     if tag is None:
-#         fname_out = DEFAULT_FNAME_BIDS_LIST
-#     else:
-#         fname_out = PATTERN_BIDS_LIST_FILTERED.format(tag)
-#     fpath_out = dpath_dbm / fname_out
-#     helper.check_file(fpath_out)
+    fpath_out = dpath_dbm / FNAME_BIDS_LIST
+    helper.check_file(fpath_out)
 
-#     # create output directory
-#     dpath_out = fpath_out.parent
-#     helper.mkdir(dpath_out, exist_ok=True)
+    # create output directory
+    dpath_out = fpath_out.parent
+    helper.mkdir(dpath_out, exist_ok=True)
 
-#     # create index for BIDS directory
-#     fpath_cache = dpath_out / fname_cache
-#     bids_layout = BIDSLayout(dpath_bids, database_path=fpath_cache, reset_database=reset_cache)
+    # create index for BIDS directory
+    fpath_cache = dpath_out / fname_cache
+    bids_layout = BIDSLayout(dpath_bids, database_path=fpath_cache, reset_database=reset_cache)
 
-#     # get all T1 files
-#     fpaths_t1 = bids_layout.get(
-#         extension=f"{EXT_NIFTI}{EXT_GZIP}".strip("."),
-#         suffix=SUFFIX_T1,
-#         return_type="filename",
-#     )
+    # get all T1 files
+    fpaths_t1 = bids_layout.get(
+        extension=f"{EXT_NIFTI}{EXT_GZIP}".strip("."),
+        suffix=SUFFIX_T1,
+        return_type="filename",
+    )
 
-#     helper.print_info(f"Found {len(fpaths_t1)} T1 files")
+    helper.print_info(f"Found {len(fpaths_t1)} T1 files")
 
-#     # write paths to output file
-#     with fpath_out.open("w") as file_out:
-#         for fpath_t1 in fpaths_t1:
-#             # fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
-#             file_out.write(f"{fpath_t1}\n")
-#         helper.print_outcome(f"Wrote BIDS paths to {fpath_out}")
+    # write paths to output file
+    with fpath_out.open("w") as file_out:
+        for fpath_t1 in fpaths_t1:
+            # fpath_t1 = Path(fpath_t1).relative_to(dpath_bids)
+            file_out.write(f"{fpath_t1}\n")
+        helper.print_outcome(f"Wrote BIDS paths to {fpath_out}")
 
 
 # @cli.command()
@@ -334,6 +332,7 @@ def cli():
 @click.option("--mincignore", "fname_mincignore", default=DEFAULT_FNAME_MINCIGNORE)
 @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
 # @click.option("--convert/--no-convert", default=True)
+@click.option("--from-nifti/--from-dicom", default=False)
 @click.option("--input-dir", "dname_input", default=DEFAULT_DNAME_INPUT)
 @click.option("--col-subject", "col_cohort_subject", default=COL_PAT_ID,
               help=f"Name of subject column in cohort file. Default: {COL_PAT_ID}")
@@ -355,6 +354,7 @@ def pre_run(
     fpath_cohort: Path | None,
     fname_mincignore,
     tag,
+    from_nifti,
     # convert,
     dname_input,
     col_cohort_subject,
@@ -376,11 +376,18 @@ def pre_run(
         fname_converted = image_id
         return Path(dpath_minc / dname_minc_session / fname_converted).with_suffix(EXT_MINC)
     
+    def parse_and_add_path(path, col_path):
+        entities = parse_file_entities(path)
+        entities[col_path] = path
+        return entities
+
+    col_fpath_nifti = 'fpath_nifti'
     col_fpath_minc = 'fpath_minc'
 
     dpath_input: Path = dpath_dbm / dname_input 
     dpath_dicom: Path = dpath_input / DNAME_DICOM_INPUT
     dpath_minc: Path = dpath_input / DNAME_MINC_INPUT
+    dpath_nifti = Path(dpath_input) / DNAME_NIFTI_INPUT
     fpath_mincignore: Path = dpath_dbm / fname_mincignore
 
     if tag is None:
@@ -391,97 +398,210 @@ def pre_run(
         fname_out = PATTERN_MINC_LIST.format(tag)
         fpath_cohort = dpath_dbm / PATTERN_COHORT.format(tag)
 
+    if from_nifti:
+        fname_out = add_suffix(fname_out, SUFFIX_FROM_NIFTI, sep=None)
+        dpath_minc = add_suffix(dpath_minc, SUFFIX_FROM_NIFTI, sep=None)
+
+    fpath_bids_list = dpath_dbm / FNAME_BIDS_LIST
+
     fpath_out = dpath_dbm / fname_out
     helper.check_file(fpath_out)
 
     df_cohort = pd.read_csv(fpath_cohort, dtype=str)
-    
-    # require same MINC version as for DBM pipeline
-    check_nihpd_pipeline(dpath_pipeline)
 
-    if not dpath_dicom.exists():
-        raise FileNotFoundError(f'DICOM directory not found: {dpath_dicom}')
-    helper.mkdir(dpath_minc, exist_ok=True)
-    
-    # convert DICOMs
-    count_dicoms_converted = 0
-    count_dicoms_ignored = 0
-    count_dicoms_skipped = 0
-    for dpath_dicom_image, dnames_sub, _ in os.walk(dpath_dicom):
+    # print(f'fpath_out: {fpath_out}')
+    # print(f'dpath_minc: {dpath_minc}')
+    # return
+
+    # DICOM-to-MINC
+    if not from_nifti:
+
+        # require same MINC version as for DBM pipeline
+        check_nihpd_pipeline(dpath_pipeline)
+
+        if not dpath_dicom.exists():
+            raise FileNotFoundError(f'DICOM directory not found: {dpath_dicom}')
+        helper.mkdir(dpath_minc, exist_ok=True)
         
-        if len(dnames_sub) > 0:
-            continue
+        # convert DICOMs
+        count_dicoms_converted = 0
+        count_dicoms_ignored = 0
+        count_dicoms_skipped = 0
+        for dpath_dicom_image, dnames_sub, _ in os.walk(dpath_dicom):
+            
+            if len(dnames_sub) > 0:
+                continue
 
-        image_id = Path(dpath_dicom_image).name
-        if image_id.startswith('I'):
-            image_id = image_id[1:]
+            image_id = Path(dpath_dicom_image).name
+            if image_id.startswith('I'):
+                image_id = image_id[1:]
 
-        try:
-            subject, session = df_cohort.set_index(col_cohort_image).loc[
-                image_id, 
-                [col_cohort_subject, col_cohort_session],
-            ]
-        except KeyError:
-            helper.print_info(f'Ignoring image with ID {image_id}')
-            count_dicoms_ignored += 1
-            continue
+            try:
+                subject, session = df_cohort.set_index(col_cohort_image).loc[
+                    image_id, 
+                    [col_cohort_subject, col_cohort_session],
+                ]
+            except KeyError:
+                # helper.print_info(f'Ignoring image with ID {image_id}')
+                count_dicoms_ignored += 1
+                continue
 
-        session = map_session(session)
+            session = map_session(session)
 
-        fpath_converted = generate_fpath_minc(subject, session, image_id)
+            fpath_converted = generate_fpath_minc(subject, session, image_id)
 
-        helper.mkdir(fpath_converted.parent, exist_ok=True)
+            helper.mkdir(fpath_converted.parent, exist_ok=True)
 
-        if fpath_converted.exists():
-            count_dicoms_skipped += 1
-            continue
+            if fpath_converted.exists():
+                count_dicoms_skipped += 1
+                continue
 
-        helper.run_command(
-            [
-                'dcm2mnc',
-                '-usecoordinates',
-                '-dname', fpath_converted.parent.relative_to(dpath_minc),
-                '-fname', fpath_converted.with_suffix('').name,
-                dpath_dicom_image,
-                dpath_minc,
-            ],
-            silent=silent,
-        )
-        count_dicoms_converted += 1
+            helper.run_command(
+                [
+                    'dcm2mnc',
+                    '-usecoordinates',
+                    '-dname', fpath_converted.parent.relative_to(dpath_minc),
+                    '-fname', fpath_converted.with_suffix('').name,
+                    dpath_dicom_image,
+                    dpath_minc,
+                ],
+                silent=silent,
+            )
+            count_dicoms_converted += 1
 
-    helper.print_info(f'Converted {count_dicoms_converted} DICOM directories')
-    helper.print_info(f'Skipped {count_dicoms_skipped} DICOM directories that already existed')
-    helper.print_info(f'Ignored {count_dicoms_ignored} DICOM directories that were not in cohort file')
+        helper.print_info(f'Converted {count_dicoms_converted} DICOM directories')
+        helper.print_info(f'Skipped {count_dicoms_skipped} DICOM directories that already existed')
+        helper.print_info(f'Ignored {count_dicoms_ignored} DICOM directories that were not in cohort file')
     
+        data_minc_list = []
+        missing_image_ids = []
+        for subject, session, image_id in df_cohort[[col_cohort_subject, col_cohort_session, col_cohort_image]].itertuples(index=False):
+            session = map_session(session)
+            fpath_minc = generate_fpath_minc(subject, session, image_id)
+
+            # if str(fpath_minc) in fpaths_to_ignore:
+            #     continue
+
+            if not fpath_minc.exists():
+                missing_image_ids.append(image_id)
+                helper.print_info(f'No MINC file found for image {image_id} (subject {subject}, session {session})', text_color='yellow')
+
+            data_minc_list.append({
+                col_cohort_subject: int(subject), # needs int for hash to work
+                col_cohort_session: session,
+                col_fpath_minc: fpath_minc,
+            })
+
+        if len(missing_image_ids) > 0:
+            raise ValueError(f'Missing {len(missing_image_ids)} images: {",".join(missing_image_ids)}')
+
+        df_minc_list = pd.DataFrame(data_minc_list)
+
+    # NIFTI-to-MINC
+    else:
+        df_bids_list = pd.DataFrame(
+            [
+                parse_and_add_path(fpath, col_path=col_fpath_nifti)
+                for fpath in load_list(fpath_bids_list)
+                .squeeze("columns")
+                .tolist()
+            ]
+        )
+
+        helper.print_info(f"Loaded BIDS list:\t\t{df_bids_list.shape}")
+
+        df_cohort[COL_BIDS_SUBJECT] = df_cohort[col_cohort_subject].astype(str)
+        df_cohort[COL_BIDS_SESSION] = df_cohort[col_cohort_session].map(COHORT_SESSION_MAP)
+
+        if pd.isna(df_cohort[COL_BIDS_SESSION]).any():
+            raise RuntimeError(f"Conversion with map {COHORT_SESSION_MAP} failed for some rows")
+
+        subjects_all = set(df_bids_list[COL_BIDS_SUBJECT])
+        subjects_cohort = set(df_cohort[COL_BIDS_SUBJECT])
+        subjects_diff = subjects_cohort - subjects_all
+        if len(subjects_diff) > 0:
+            # helper.echo(
+            #     f"{len(subjects_diff)} subjects are not in the BIDS list",
+            #     text_color="yellow",
+            # )
+            # helper.echo(','.join(subjects_diff), text_color='yellow') 
+            helper.echo(f'{len(subjects_diff)} subjects are not in the BIDS list: {",".join(subjects_diff)}', text_color='yellow')
+
+            data_extra_nifti = []
+            for subject in subjects_diff:
+                df_cohort_subject = df_cohort.loc[df_cohort[col_cohort_subject] == subject]
+                if len(df_cohort_subject) != 1:
+                    raise NotImplementedError(f'Missing BIDS file for a subject with more than 1 file available in PPMI')
+                image_id = df_cohort_subject[col_cohort_image].item()
+                session = df_cohort_subject[col_cohort_session].item()
+                fpaths_nifti = list(dpath_nifti.glob(f'**/*/*{image_id}.nii'))
+                
+                for fpath_nifti in fpaths_nifti:
+                    data_extra_nifti.append({
+                        COL_BIDS_SUBJECT: subject,
+                        COL_BIDS_SESSION: COHORT_SESSION_MAP[session],
+                        col_fpath_nifti: fpath_nifti,
+                    })
+
+            df_extra_nifti = pd.DataFrame(data_extra_nifti)
+        else:
+            df_extra_nifti = None
+        
+        df_nifti_list: pd.DataFrame = pd.concat([df_bids_list, df_extra_nifti], axis='index')
+
+        # convert to minc
+        count_bids_converted = 0
+        count_bids_skipped = 0
+        data_minc_list = []
+        df_nifti_to_convert = df_nifti_list.merge(df_cohort, on=[COL_BIDS_SUBJECT, COL_BIDS_SESSION], how="inner")
+        for subject, session, fpath_nifti in df_nifti_to_convert[[COL_BIDS_SUBJECT, COL_BIDS_SESSION, col_fpath_nifti]].itertuples(index=False):
+            fpath_nifti = Path(fpath_nifti)
+            prefix_nifti = fpath_nifti.name.removesuffix(EXT_GZIP).removesuffix(EXT_NIFTI)
+            fpath_minc = generate_fpath_minc(subject, session, prefix_nifti)
+
+            if not Path(fpath_minc).exists():
+
+                # if zipped file, unzip
+                if fpath_nifti.suffix == EXT_GZIP:
+                    fpath_nifti_unzipped = helper.dpath_tmp / fpath_nifti.stem  # drop last suffix
+                    with fpath_nifti_unzipped.open("wb") as file_nifti_unzipped:
+                        helper.run_command(["zcat", fpath_nifti], stdout=file_nifti_unzipped, silent=silent)
+                # else create symbolic link
+                else:
+                    fpath_nifti_unzipped = helper.dpath_tmp / fpath_nifti.name  # keep last suffix
+                    helper.run_command(["ln", "-s", fpath_nifti, fpath_nifti_unzipped], silent=silent)
+
+                helper.mkdir(Path(fpath_minc).parent, exist_ok=True)
+                helper.run_command(
+                    [
+                        'nii2mnc',
+                        fpath_nifti,
+                        fpath_minc,
+                    ],
+                    silent=silent,
+                )
+                count_bids_converted += 1
+            else:
+                count_bids_skipped += 1
+
+            data_minc_list.append({
+                col_cohort_subject: int(subject), # needs int for hash to work
+                col_cohort_session: session,
+                col_fpath_minc: str(fpath_minc),
+            })
+
+        helper.print_info(f'Converted {count_bids_converted} Nifti files')
+        helper.print_info(f'Skipped {count_bids_skipped} Nifti files that already existed')
+    
+        df_minc_list = pd.DataFrame(data_minc_list).drop_duplicates()
+
     if fpath_mincignore.exists():
         fpaths_to_ignore = pd.read_csv(fpath_mincignore, header=None).iloc[:, 0].to_list()
         helper.print_info(f'Ignoring up to {len(fpaths_to_ignore)} files')
     else:
         fpaths_to_ignore = []
 
-    data_minc_list = []
-    missing_image_ids = []
-    for subject, session, image_id in df_cohort[[col_cohort_subject, col_cohort_session, col_cohort_image]].itertuples(index=False):
-        session = map_session(session)
-        fpath_minc = generate_fpath_minc(subject, session, image_id)
-
-        if str(fpath_minc) in fpaths_to_ignore:
-            continue
-
-        if not fpath_minc.exists():
-            missing_image_ids.append(image_id)
-            helper.print_info(f'No MINC file found for image {image_id} (subject {subject}, session {session})', text_color='yellow')
-
-        data_minc_list.append({
-            col_cohort_subject: int(subject), # needs int for hash to work
-            col_cohort_session: session,
-            col_fpath_minc: fpath_minc,
-        })
-
-    if len(missing_image_ids) > 0:
-        helper.print_error(f'Missing {len(missing_image_ids)} images: {",".join(missing_image_ids)}')
-
-    df_minc_list = pd.DataFrame(data_minc_list)
+    df_minc_list = df_minc_list.loc[~df_minc_list[col_fpath_minc].isin(fpaths_to_ignore)]
 
     counts = df_minc_list.groupby([col_cohort_subject, col_cohort_session])[col_fpath_minc].count()
     with_multiple = counts.loc[counts > 1]
@@ -526,6 +646,7 @@ def pre_run(
               help=f"Path to MNI template (MINC). Default: {DEFAULT_DPATH_TEMPLATE}")
 @click.option("--template", default=DEFAULT_TEMPLATE,
               help=f"MNI template name. Default: {DEFAULT_TEMPLATE}")
+@click.option("--from-nifti/--from-dicom", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--sge/--no-sge", "with_sge", default=True)
 @click.option("-q", "--queue", "sge_queue", default=DEFAULT_SGE_QUEUE)
@@ -542,6 +663,7 @@ def run(
     dpath_pipeline: Path,
     dpath_template: Path,
     template,
+    from_nifti,
     use_old_pipeline,
     dname_qc,
     with_sge,
@@ -552,10 +674,15 @@ def run(
         fname_minc_list = DEFAULT_FNAME_MINC_LIST
     else:
         fname_minc_list = PATTERN_MINC_LIST.format(tag)
-    fpath_minc_list = dpath_dbm / fname_minc_list
+
+    if from_nifti:
+        fname_minc_list = add_suffix(fname_minc_list, SUFFIX_FROM_NIFTI, sep=None)
+        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
 
     if use_old_pipeline:
         dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
+
+    fpath_minc_list = dpath_dbm / fname_minc_list
 
     dpath_output = dpath_dbm / dname_output
     helper.mkdir(dpath_output, exist_ok=True)
@@ -627,6 +754,7 @@ def run(
               help=f"Path to MNI template (MINC). Default: {DEFAULT_DPATH_TEMPLATE}")
 @click.option("--template", default=DEFAULT_TEMPLATE, 
               help=f"MNI template name. Default: {DEFAULT_TEMPLATE}")
+@click.option("--from-nifti/--from-dicom", default=False)
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--qc/--no-qc", "with_qc", default=True)
 @add_silent_option()
@@ -639,6 +767,7 @@ def post_run(
     tag,
     dpath_template: Path, 
     template,
+    from_nifti,
     dname_output: Path, 
     with_qc,
     silent,
@@ -657,8 +786,12 @@ def post_run(
         fname_input_list = DEFAULT_FNAME_MINC_LIST
     else:
         fname_input_list = PATTERN_MINC_LIST.format(tag)
-    fpath_input_list = dpath_dbm / fname_input_list
 
+    if from_nifti:
+        fname_input_list = add_suffix(fname_input_list, SUFFIX_FROM_NIFTI, sep=None)
+        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
+    
+    fpath_input_list = dpath_dbm / fname_input_list
     dpath_output = dpath_dbm / dname_output
 
     count_missing = 0
@@ -748,6 +881,7 @@ def post_run(
 @click.argument("dpath_dbm", callback=callback_path)
 @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
+@click.option("--from-nifti/--from-dicom", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--write-new-list/--no-write-new-list", default=True)
 @add_helper_options()
@@ -757,6 +891,7 @@ def status(
     dpath_dbm: Path,
     tag,
     dname_output,
+    from_nifti,
     use_old_pipeline,
     write_new_list,
 ):
@@ -769,7 +904,12 @@ def status(
     else:
         fname_input_list = PATTERN_MINC_LIST.format(tag)
         fname_status = PATTERN_STATUS.format(tag)
-            
+
+    if from_nifti:
+        fname_input_list = add_suffix(fname_input_list, SUFFIX_FROM_NIFTI, sep=None)
+        fname_status = add_suffix(fname_status, SUFFIX_FROM_NIFTI, sep=None)
+        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
+    
     if use_old_pipeline:
         fname_status = add_suffix(fname_status, SUFFIX_OLD_PIPELINE, sep=None)
         dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
@@ -827,10 +967,11 @@ def status(
 
 
 # TODO add failed_dbm.csv for subject that failed QC (?)
-# for now just create a new status file and manually mask last col as FAIL
+# for now just create a new status file and manually mark last col as FAIL
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
 @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
+@click.option("--from-nifti/--from-dicom", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--tarball-dir", "dname_tar", default=DEFAULT_DNAME_TAR)
@@ -841,11 +982,14 @@ def tar(
     helper: ScriptHelper,
     dpath_dbm: Path,
     tag,
+    from_nifti,
     use_old_pipeline,
     dname_output,
     dname_tar,
     silent,
 ):
+    if from_nifti:
+        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
     if use_old_pipeline:
         dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
     
@@ -943,8 +1087,8 @@ def init_env(
     # MRI output
     # constants["DPATH_OUT"] = constants["DPATH_ROOT"] / INIT_DNAME_OUT
     # constants["DPATH_OUT_DBM"] = constants["DPATH_OUT"] / INIT_DNAME_OUT_DBM
-    constants["FPATH_BIDS_LIST"] = constants["DPATH_OUT_DBM"] / DEFAULT_FNAME_BIDS_LIST
-    constants["FPATH_BIDS_LIST_FILTERED"] = constants["DPATH_OUT_DBM"] / DEFAULT_FNAME_BIDS_LIST_FILTERED
+    constants["FPATH_BIDS_LIST"] = constants["DPATH_OUT_DBM"] / FNAME_BIDS_LIST
+    # constants["FPATH_BIDS_LIST_FILTERED"] = constants["DPATH_OUT_DBM"] / DEFAULT_FNAME_BIDS_LIST_FILTERED
 
     if not Path(constants["DPATH_MRI_CODE"]).exists():
         helper.print_error(
@@ -966,6 +1110,7 @@ def init_env(
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
 @click.argument("sessions", nargs=-1)
+@click.option("--from-nifti/--from-dicom", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT)
@@ -975,10 +1120,15 @@ def qc(
     helper: ScriptHelper, 
     dpath_dbm: Path, 
     sessions, 
+    from_nifti,
     use_old_pipeline,
     dname_output, 
     dname_qc, 
 ):
+    if from_nifti:
+        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
+        dname_qc = add_suffix(dname_qc, SUFFIX_FROM_NIFTI, sep=None)
+
     if use_old_pipeline:
         qc_file_patterns = QC_FILE_PATTERNS_OLD_PIPELINE
         dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
@@ -1018,7 +1168,7 @@ def qc(
                     f"Missing {len(qc_file_patterns) - count} QC file(s) "
                     f"for subject {subject}, session {session}"
                 )
-        
+
 
 if __name__ == "__main__":
     cli()

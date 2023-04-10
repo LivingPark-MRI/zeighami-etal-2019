@@ -456,8 +456,10 @@ def run_old_from_minc_list(
         command_singularity_args = [
             "singularity",
             "run",
+            "--no-home",
             f"--bind {dpath_src}:{dpath_src}",
             f"--bind {fpath_minc}:{fpath_minc}",
+            f"--bind {dpath_subject}:{dpath_subject}",
             f"--bind {dpath_session_results}:{dpath_session_results}",
             f"--bind {dpath_subject_qc}:{dpath_subject_qc}",
             fpath_container,
