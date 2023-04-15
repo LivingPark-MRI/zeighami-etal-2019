@@ -528,10 +528,13 @@ def pre_run(
             helper.echo(f'{len(subjects_diff)} subjects are not in the BIDS list: {",".join(subjects_diff)}', text_color='yellow')
 
             data_extra_nifti = []
+            subjects_to_download = []
             for subject in subjects_diff:
                 df_cohort_subject = df_cohort.loc[df_cohort[col_cohort_subject] == subject]
-                if len(df_cohort_subject) != 1:
-                    raise NotImplementedError(f'Missing BIDS file for a subject with more than 1 file available in PPMI')
+                if len(df_cohort_subject) == 0:
+                    subjects_to_download.append(subject)
+                elif len(df_cohort_subject) > 1:
+                    raise NotImplementedError(f'Missing BIDS file for a subject with more than 1 file available in PPMI ({subject})')
                 image_id = df_cohort_subject[col_cohort_image].item()
                 session = df_cohort_subject[col_cohort_session].item()
                 fpaths_nifti = list(dpath_nifti.glob(f'**/*/*{image_id}.nii'))
@@ -542,6 +545,8 @@ def pre_run(
                         COL_BIDS_SESSION: COHORT_SESSION_MAP[session],
                         col_fpath_nifti: fpath_nifti,
                     })
+            if len(subjects_to_download) > 0:
+                raise FileNotFoundError(f'Missing files for subjects: {subjects_to_download}')
 
             df_extra_nifti = pd.DataFrame(data_extra_nifti)
         else:
@@ -648,6 +653,10 @@ def pre_run(
               help=f"MNI template name. Default: {DEFAULT_TEMPLATE}")
 @click.option("--from-nifti/--from-dicom", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
+@click.option("--nlr-level", type=click.FloatRange(min=0.5), default=DEFAULT_NLR_LEVEL,
+              help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}")
+@click.option("--dbm-fwhm", type=float, default=DEFAULT_DBM_FWHM,
+              help=f"Blurring kernel for DBM map. Default: {DEFAULT_DBM_FWHM}")
 @click.option("--sge/--no-sge", "with_sge", default=True)
 @click.option("-q", "--queue", "sge_queue", default=DEFAULT_SGE_QUEUE)
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
@@ -665,6 +674,8 @@ def run(
     template,
     from_nifti,
     use_old_pipeline,
+    nlr_level,
+    dbm_fwhm,
     dname_qc,
     with_sge,
     sge_queue,
@@ -705,6 +716,8 @@ def run(
             dpath_job_logs=dpath_job_logs,
             sge_queue=sge_queue,
             template=template,
+            nlr_level=nlr_level,
+            dbm_fwhm=dbm_fwhm,
         )
     else:
         check_program("python2", "Python 2")
@@ -883,6 +896,10 @@ def post_run(
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--from-nifti/--from-dicom", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
+@click.option("--nlr-level", type=click.FloatRange(min=0.5), default=DEFAULT_NLR_LEVEL,
+              help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}")
+@click.option("--dbm-fwhm", type=float, default=DEFAULT_DBM_FWHM,
+              help=f"Blurring kernel for DBM map. Default: {DEFAULT_DBM_FWHM}")
 @click.option("--write-new-list/--no-write-new-list", default=True)
 @add_helper_options()
 @with_helper
@@ -893,6 +910,8 @@ def status(
     dname_output,
     from_nifti,
     use_old_pipeline,
+    nlr_level,
+    dbm_fwhm,
     write_new_list,
 ):
     
@@ -905,6 +924,9 @@ def status(
         fname_input_list = PATTERN_MINC_LIST.format(tag)
         fname_status = PATTERN_STATUS.format(tag)
 
+    if use_old_pipeline and not (nlr_level == DEFAULT_NLR_LEVEL and dbm_fwhm == DEFAULT_DBM_FWHM):
+            fname_status = add_suffix(fname_status, f'_nlr{int(nlr_level)}_dbm{int(dbm_fwhm)}', sep=None)
+
     if from_nifti:
         fname_input_list = add_suffix(fname_input_list, SUFFIX_FROM_NIFTI, sep=None)
         fname_status = add_suffix(fname_status, SUFFIX_FROM_NIFTI, sep=None)
@@ -915,8 +937,8 @@ def status(
         dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
         tracker_configs = TRACKER_CONFIGS_OLD_PIPELINE
         kwargs_tracking = {
-            'nlr_level': DEFAULT_NLR_LEVEL, # just use defaults
-            'dbm_fwhm': DEFAULT_DBM_FWHM,
+            'nlr_level': nlr_level, # just use defaults
+            'dbm_fwhm': dbm_fwhm,
         }
     else:
         tracker_configs = TRACKER_CONFIGS
@@ -973,6 +995,10 @@ def status(
 @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
 @click.option("--from-nifti/--from-dicom", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
+@click.option("--nlr-level", type=click.FloatRange(min=0.5), default=DEFAULT_NLR_LEVEL,
+              help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}")
+@click.option("--dbm-fwhm", type=float, default=DEFAULT_DBM_FWHM,
+              help=f"Blurring kernel for DBM map. Default: {DEFAULT_DBM_FWHM}")
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--tarball-dir", "dname_tar", default=DEFAULT_DNAME_TAR)
 @add_silent_option()
@@ -984,6 +1010,8 @@ def tar(
     tag,
     from_nifti,
     use_old_pipeline,
+    nlr_level,
+    dbm_fwhm,
     dname_output,
     dname_tar,
     silent,
@@ -1019,7 +1047,15 @@ def tar(
 
         if use_old_pipeline:
             dpath_results_session: Path = dpath_output / subject / session
-            fpaths_tmp = [fpath for fpath in dpath_results_session.iterdir() if fpath.suffix in [EXT_NIFTI, EXT_GZIP]]
+            fpaths_tmp = [
+                fpath 
+                for fpath in dpath_results_session.iterdir() 
+                if 
+                (
+                    fpath.suffix in [EXT_NIFTI, EXT_GZIP]
+                    and f'nlr_level{int(nlr_level)}{SEP_SUFFIX}dbm_fwhm{int(dbm_fwhm)}' in fpath.name
+                )
+            ]
             if len(fpaths_tmp) != 1:
                 raise RuntimeError(f'Expected exaclty 1 DBM file in {dpath_results_session}, but got: {fpaths_tmp}')
             else:

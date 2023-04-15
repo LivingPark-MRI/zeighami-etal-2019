@@ -13,6 +13,8 @@ from helpers import (
     add_suffix,
     callback_path,
     check_dbm_inputs,
+    DEFAULT_NLR_LEVEL,
+    DEFAULT_DBM_FWHM,
     EXT_GZIP,
     EXT_JPEG,
     EXT_MINC,
@@ -51,6 +53,7 @@ QC_FILE_PATTERNS_OLD_PIPELINE = {
     "linear": "qc_{}_{}-norm_lr.jpg", # subject session
     "linear_mask": "qc_{}_{}-norm_lr_mask.jpg",
     "nonlinear": "qc_{}_{}-nlr.jpg",
+    "nonlinear_4_8": "qc_{}_{}-nlr-4.0-8.0.jpg",
 }
 
 def check_results_old_pipeline(subject_dir, session_id, result_filenames: Iterable[str|Path]):
@@ -283,29 +286,52 @@ def run_old_from_file(
 
     # perform nonlinear registration
     if not (fpath_nonlinear.exists() and fpath_nonlinear_transform.exists() and fpath_nonlinear_grid.exists()):
-        helper.run_command(
-            [
-                "nlfit_s",
-                "-verbose",
-                "-source_mask",
-                fpath_norm_mask,
-                "-target_mask",
-                fpath_template_mask,
-                "-level",
-                nlr_level,
-                fpath_norm,                 # source.mnc
-                fpath_template,             # target.mnc
-                # fpath_norm_masked,          # source.mnc
-                # fpath_template_masked,      # target.mnc
-                fpath_nonlinear_transform,  # output.xfm
-                fpath_nonlinear,            # output.mnc
-            ]
-        )
+        if (nlr_level == DEFAULT_NLR_LEVEL and dbm_fwhm == DEFAULT_DBM_FWHM):
+            helper.run_command(
+                [
+                    "nlfit_s",
+                    "-verbose",
+                    "-source_mask",
+                    fpath_norm_mask,
+                    "-target_mask",
+                    fpath_template_mask,
+                    "-level",
+                    nlr_level,
+                    fpath_norm,                 # source.mnc
+                    fpath_template,             # target.mnc
+                    # fpath_norm_masked,          # source.mnc
+                    # fpath_template_masked,      # target.mnc
+                    fpath_nonlinear_transform,  # output.xfm
+                    fpath_nonlinear,            # output.mnc
+                ]
+            )
+        else:
+            helper.run_command(
+                [
+                    "nlfit_s",
+                    "-verbose",
+                    "-source_mask",
+                    fpath_norm_mask,
+                    "-target_mask",
+                    fpath_template_mask,
+                    "-level",
+                    nlr_level,
+                    # fpath_norm,                 # source.mnc
+                    # fpath_template,             # target.mnc
+                    fpath_norm_masked,          # source.mnc
+                    fpath_template_masked,      # target.mnc
+                    fpath_nonlinear_transform,  # output.xfm
+                    fpath_nonlinear,            # output.mnc
+                ]
+            )
     else:
         print_skip_message('nonlinear registration')
 
     # qc nonlinear registration
     if not fpath_qc_nonlinear.exists():
+        minc_qc(helper, fpath_nonlinear, fpath_qc_nonlinear, fpath_template_outline, prefix_qc)
+    elif not (nlr_level == DEFAULT_NLR_LEVEL and dbm_fwhm == DEFAULT_DBM_FWHM):
+        fpath_qc_nonlinear = add_suffix(fpath_qc_nonlinear, f'{nlr_level}{SEP_SUFFIX}{dbm_fwhm}', sep=SEP_SUFFIX)
         minc_qc(helper, fpath_nonlinear, fpath_qc_nonlinear, fpath_template_outline, prefix_qc)
     else:
         print_skip_message('QC (nonlinear registration)')
