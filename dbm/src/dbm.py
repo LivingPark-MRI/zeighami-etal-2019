@@ -100,7 +100,7 @@ DNAME_MINC_INPUT = "minc"
 DNAME_NIFTI_INPUT = "nifti"
 DPATH_DICOM_TO_SUBJECT = Path('PPMI')
 COL_IMAGE_ID = "Image ID"
-COHORT_SESSION_MAP = {"BL": "1"}
+COHORT_SESSION_MAP = {"BL": "1", "U01": "1", "PW": "1", "V04": "1"}
 SUFFIX_FROM_NIFTI = "_from_nifti"
 
 # DBM
@@ -446,6 +446,11 @@ def pre_run(
                 count_dicoms_ignored += 1
                 continue
 
+            try:
+                int(subject)
+            except TypeError:
+                raise TypeError(f'Subject IDs must be integers (got: {subject})')
+
             session = map_session(session)
 
             fpath_converted = generate_fpath_minc(subject, session, image_id)
@@ -592,7 +597,7 @@ def pre_run(
             data_minc_list.append({
                 col_cohort_subject: int(subject), # needs int for hash to work
                 col_cohort_session: session,
-                col_fpath_minc: str(fpath_minc),
+                col_fpath_minc: fpath_minc,
             })
 
         helper.print_info(f'Converted {count_bids_converted} Nifti files')
@@ -602,6 +607,7 @@ def pre_run(
 
     if fpath_mincignore.exists():
         fpaths_to_ignore = pd.read_csv(fpath_mincignore, header=None).iloc[:, 0].to_list()
+        fpaths_to_ignore = [Path(fpath) for fpath in fpaths_to_ignore]
         helper.print_info(f'Ignoring up to {len(fpaths_to_ignore)} files')
     else:
         fpaths_to_ignore = []
