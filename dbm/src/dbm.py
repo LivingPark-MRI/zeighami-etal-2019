@@ -102,6 +102,7 @@ DPATH_DICOM_TO_SUBJECT = Path('PPMI')
 COL_IMAGE_ID = "Image ID"
 COHORT_SESSION_MAP = {"BL": "1", "U01": "1", "PW": "1", "V04": "1"}
 SUFFIX_FROM_NIFTI = "_from_nifti"
+SUFFIX_FROM_NIFTI_PPMI = "_from_nifti_ppmi"
 
 # DBM
 COMMAND_PYTHON2 = "python2"
@@ -333,6 +334,7 @@ def bids_list(
 @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
 # @click.option("--convert/--no-convert", default=True)
 @click.option("--from-nifti/--from-dicom", default=False)
+@click.option("--ppmi-nifti/--heudiconv", default=False)
 @click.option("--input-dir", "dname_input", default=DEFAULT_DNAME_INPUT)
 @click.option("--col-subject", "col_cohort_subject", default=COL_PAT_ID,
               help=f"Name of subject column in cohort file. Default: {COL_PAT_ID}")
@@ -355,6 +357,7 @@ def pre_run(
     fname_mincignore,
     tag,
     from_nifti,
+    ppmi_nifti,
     # convert,
     dname_input,
     col_cohort_subject,
@@ -399,8 +402,12 @@ def pre_run(
         fpath_cohort = dpath_dbm / PATTERN_COHORT.format(tag)
 
     if from_nifti:
-        fname_out = add_suffix(fname_out, SUFFIX_FROM_NIFTI, sep=None)
-        dpath_minc = add_suffix(dpath_minc, SUFFIX_FROM_NIFTI, sep=None)
+        if ppmi_nifti:
+            fname_out = add_suffix(fname_out, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+            dpath_minc = add_suffix(dpath_minc, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+        else:
+            fname_out = add_suffix(fname_out, SUFFIX_FROM_NIFTI, sep=None)
+            dpath_minc = add_suffix(dpath_minc, SUFFIX_FROM_NIFTI, sep=None)
 
     fpath_bids_list = dpath_dbm / FNAME_BIDS_LIST
 
@@ -408,10 +415,6 @@ def pre_run(
     helper.check_file(fpath_out)
 
     df_cohort = pd.read_csv(fpath_cohort, dtype=str)
-
-    # print(f'fpath_out: {fpath_out}')
-    # print(f'dpath_minc: {dpath_minc}')
-    # return
 
     # DICOM-to-MINC
     if not from_nifti:
@@ -504,59 +507,78 @@ def pre_run(
 
     # NIFTI-to-MINC
     else:
-        df_bids_list = pd.DataFrame(
-            [
-                parse_and_add_path(fpath, col_path=col_fpath_nifti)
-                for fpath in load_list(fpath_bids_list)
-                .squeeze("columns")
-                .tolist()
-            ]
-        )
-
-        helper.print_info(f"Loaded BIDS list:\t\t{df_bids_list.shape}")
 
         df_cohort[COL_BIDS_SUBJECT] = df_cohort[col_cohort_subject].astype(str)
         df_cohort[COL_BIDS_SESSION] = df_cohort[col_cohort_session].map(COHORT_SESSION_MAP)
 
-        if pd.isna(df_cohort[COL_BIDS_SESSION]).any():
-            raise RuntimeError(f"Conversion with map {COHORT_SESSION_MAP} failed for some rows")
+        if not ppmi_nifti:
+            df_bids_list = pd.DataFrame(
+                [
+                    parse_and_add_path(fpath, col_path=col_fpath_nifti)
+                    for fpath in load_list(fpath_bids_list)
+                    .squeeze("columns")
+                    .tolist()
+                ]
+            )
 
-        subjects_all = set(df_bids_list[COL_BIDS_SUBJECT])
-        subjects_cohort = set(df_cohort[COL_BIDS_SUBJECT])
-        subjects_diff = subjects_cohort - subjects_all
-        if len(subjects_diff) > 0:
+            helper.print_info(f"Loaded BIDS list:\t\t{df_bids_list.shape}")
+
+            if pd.isna(df_cohort[COL_BIDS_SESSION]).any():
+                raise RuntimeError(f"Conversion with map {COHORT_SESSION_MAP} failed for some rows")
+            
+            subjects_all = set(df_bids_list[COL_BIDS_SUBJECT])
+            subjects_cohort = set(df_cohort[COL_BIDS_SUBJECT])
+            subjects_diff = subjects_cohort - subjects_all
+
+        else:
+            df_bids_list = None
+
+        if ppmi_nifti or len(subjects_diff) > 0:
             # helper.echo(
             #     f"{len(subjects_diff)} subjects are not in the BIDS list",
             #     text_color="yellow",
             # )
             # helper.echo(','.join(subjects_diff), text_color='yellow') 
-            helper.echo(f'{len(subjects_diff)} subjects are not in the BIDS list: {",".join(subjects_diff)}', text_color='yellow')
+            if ppmi_nifti:
+                subjects_diff = set(df_cohort[col_cohort_subject].to_list())
+            else:
+                helper.echo(f'{len(subjects_diff)} subjects are not in the BIDS list: {",".join(subjects_diff)}', text_color='yellow')
 
             data_extra_nifti = []
-            subjects_to_download = []
-            for subject in subjects_diff:
-                df_cohort_subject = df_cohort.loc[df_cohort[col_cohort_subject] == subject]
-                if len(df_cohort_subject) == 0:
-                    subjects_to_download.append(subject)
-                elif len(df_cohort_subject) > 1:
-                    raise NotImplementedError(f'Missing BIDS file for a subject with more than 1 file available in PPMI ({subject})')
-                image_id = df_cohort_subject[col_cohort_image].item()
-                session = df_cohort_subject[col_cohort_session].item()
-                fpaths_nifti = list(dpath_nifti.glob(f'**/*/*{image_id}.nii'))
+            image_ids_to_download = []
+            df_cohort_to_download = df_cohort.loc[df_cohort[col_cohort_subject].isin(subjects_diff), [col_cohort_subject, col_cohort_image, col_cohort_session]]
+            for subject, image_id, session in df_cohort_to_download.itertuples(index=False):
+            # for subject in subjects_diff:
+            #     df_cohort_subject = df_cohort.loc[df_cohort[col_cohort_subject] == subject]
+            #     # if len(df_cohort_subject) == 0:
+            #     #     image_ids_to_download.append(subject)
+            #     # elif len(df_cohort_subject) > 1:
+            #     #     raise NotImplementedError(f'Missing BIDS file for a subject with more than 1 file available in PPMI ({subject})')
                 
-                for fpath_nifti in fpaths_nifti:
+            #     for image_id, session in df_cohort_subject[[col_cohort_image, col_cohort_session]].itertuples(index=False):
+                
+                    # image_id = df_cohort_subject[col_cohort_image].item()
+                    # session = df_cohort_subject[col_cohort_session].item()
+                fpaths_nifti = list(dpath_nifti.glob(f'**/*/*{image_id}.nii'))
+
+                if len(fpaths_nifti) == 0:
+                    image_ids_to_download.append(image_id)
+                elif len(fpaths_nifti) > 1:
+                    raise RuntimeError(f'Found more than one file with Image ID: {image_id}')
+                else:
                     data_extra_nifti.append({
                         COL_BIDS_SUBJECT: subject,
                         COL_BIDS_SESSION: COHORT_SESSION_MAP[session],
-                        col_fpath_nifti: fpath_nifti,
+                        col_fpath_nifti: fpaths_nifti[0],
                     })
-            if len(subjects_to_download) > 0:
-                raise FileNotFoundError(f'Missing files for subjects: {subjects_to_download}')
+
+            if len(image_ids_to_download) > 0:
+                raise FileNotFoundError(f'Missing {len(image_ids_to_download)} images: {",".join(image_ids_to_download)}')
 
             df_extra_nifti = pd.DataFrame(data_extra_nifti)
         else:
             df_extra_nifti = None
-        
+
         df_nifti_list: pd.DataFrame = pd.concat([df_bids_list, df_extra_nifti], axis='index')
 
         # convert to minc
@@ -658,6 +680,7 @@ def pre_run(
 @click.option("--template", default=DEFAULT_TEMPLATE,
               help=f"MNI template name. Default: {DEFAULT_TEMPLATE}")
 @click.option("--from-nifti/--from-dicom", default=False)
+@click.option("--ppmi-nifti/--heudiconv", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--nlr-level", type=click.FloatRange(min=0.5), default=DEFAULT_NLR_LEVEL,
               help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}")
@@ -679,6 +702,7 @@ def run(
     dpath_template: Path,
     template,
     from_nifti,
+    ppmi_nifti,
     use_old_pipeline,
     nlr_level,
     dbm_fwhm,
@@ -693,8 +717,12 @@ def run(
         fname_minc_list = PATTERN_MINC_LIST.format(tag)
 
     if from_nifti:
-        fname_minc_list = add_suffix(fname_minc_list, SUFFIX_FROM_NIFTI, sep=None)
-        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
+        if ppmi_nifti:
+            fname_minc_list = add_suffix(fname_minc_list, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+        else:
+            fname_minc_list = add_suffix(fname_minc_list, SUFFIX_FROM_NIFTI, sep=None)
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
 
     if use_old_pipeline:
         dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
@@ -774,6 +802,7 @@ def run(
 @click.option("--template", default=DEFAULT_TEMPLATE, 
               help=f"MNI template name. Default: {DEFAULT_TEMPLATE}")
 @click.option("--from-nifti/--from-dicom", default=False)
+@click.option("--ppmi-nifti/--heudiconv", default=False)
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--qc/--no-qc", "with_qc", default=True)
 @add_silent_option()
@@ -787,6 +816,7 @@ def post_run(
     dpath_template: Path, 
     template,
     from_nifti,
+    ppmi_nifti,
     dname_output: Path, 
     with_qc,
     silent,
@@ -807,8 +837,12 @@ def post_run(
         fname_input_list = PATTERN_MINC_LIST.format(tag)
 
     if from_nifti:
-        fname_input_list = add_suffix(fname_input_list, SUFFIX_FROM_NIFTI, sep=None)
-        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
+        if ppmi_nifti:
+            fname_input_list = add_suffix(fname_input_list, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+        else:
+            fname_input_list = add_suffix(fname_input_list, SUFFIX_FROM_NIFTI, sep=None)
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
     
     fpath_input_list = dpath_dbm / fname_input_list
     dpath_output = dpath_dbm / dname_output
@@ -901,6 +935,7 @@ def post_run(
 @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--from-nifti/--from-dicom", default=False)
+@click.option("--ppmi-nifti/--heudiconv", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--nlr-level", type=click.FloatRange(min=0.5), default=DEFAULT_NLR_LEVEL,
               help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}")
@@ -915,6 +950,7 @@ def status(
     tag,
     dname_output,
     from_nifti,
+    ppmi_nifti,
     use_old_pipeline,
     nlr_level,
     dbm_fwhm,
@@ -934,9 +970,14 @@ def status(
             fname_status = add_suffix(fname_status, f'_nlr{int(nlr_level)}_dbm{int(dbm_fwhm)}', sep=None)
 
     if from_nifti:
-        fname_input_list = add_suffix(fname_input_list, SUFFIX_FROM_NIFTI, sep=None)
-        fname_status = add_suffix(fname_status, SUFFIX_FROM_NIFTI, sep=None)
-        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
+        if ppmi_nifti:
+            fname_input_list = add_suffix(fname_input_list, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+            fname_status = add_suffix(fname_status, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+        else:
+            fname_input_list = add_suffix(fname_input_list, SUFFIX_FROM_NIFTI, sep=None)
+            fname_status = add_suffix(fname_status, SUFFIX_FROM_NIFTI, sep=None)
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
     
     if use_old_pipeline:
         fname_status = add_suffix(fname_status, SUFFIX_OLD_PIPELINE, sep=None)
@@ -994,12 +1035,11 @@ def status(
             helper.print_outcome(f"Wrote missing subjects/sessions to {fpath_new_list}")
 
 
-# TODO add failed_dbm.csv for subject that failed QC (?)
-# for now just create a new status file and manually mark last col as FAIL
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
 @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
 @click.option("--from-nifti/--from-dicom", default=False)
+@click.option("--ppmi-nifti/--heudiconv", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--nlr-level", type=click.FloatRange(min=0.5), default=DEFAULT_NLR_LEVEL,
               help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}")
@@ -1015,6 +1055,7 @@ def tar(
     dpath_dbm: Path,
     tag,
     from_nifti,
+    ppmi_nifti,
     use_old_pipeline,
     nlr_level,
     dbm_fwhm,
@@ -1023,7 +1064,10 @@ def tar(
     silent,
 ):
     if from_nifti:
-        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
+        if ppmi_nifti:
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+        else:
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
     if use_old_pipeline:
         dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
     
@@ -1153,6 +1197,7 @@ def init_env(
 @click.argument("dpath_dbm", callback=callback_path)
 @click.argument("sessions", nargs=-1)
 @click.option("--from-nifti/--from-dicom", default=False)
+@click.option("--ppmi-nifti/--heudiconv", default=False)
 @click.option("--old/--no-old", 'use_old_pipeline', default=False)
 @click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
 @click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT)
@@ -1163,13 +1208,18 @@ def qc(
     dpath_dbm: Path, 
     sessions, 
     from_nifti,
+    ppmi_nifti,
     use_old_pipeline,
     dname_output, 
     dname_qc, 
 ):
     if from_nifti:
-        dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
-        dname_qc = add_suffix(dname_qc, SUFFIX_FROM_NIFTI, sep=None)
+        if ppmi_nifti:
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+            dname_qc = add_suffix(dname_qc, SUFFIX_FROM_NIFTI_PPMI, sep=None)
+        else:
+            dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
+            dname_qc = add_suffix(dname_qc, SUFFIX_FROM_NIFTI, sep=None)
 
     if use_old_pipeline:
         qc_file_patterns = QC_FILE_PATTERNS_OLD_PIPELINE
