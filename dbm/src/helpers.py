@@ -182,10 +182,6 @@ def require_minc(func):
     return requires_program(func, 'mincinfo', 'MINC tools')
 
 
-# def require_python2(func):
-#     return requires_program(func, 'python2', 'Python 2')
-
-
 def check_nihpd_pipeline(dpath_pipeline):
 
     fpath_to_source: Path = dpath_pipeline / "init.sh"

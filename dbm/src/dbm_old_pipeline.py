@@ -297,10 +297,8 @@ def run_old_from_file(
                     fpath_template_mask,
                     "-level",
                     nlr_level,
-                    fpath_norm,                 # source.mnc
-                    fpath_template,             # target.mnc
-                    # fpath_norm_masked,          # source.mnc
-                    # fpath_template_masked,      # target.mnc
+                    fpath_norm,                 # source.mnc (unmasked)
+                    fpath_template,             # target.mnc (unmasked)
                     fpath_nonlinear_transform,  # output.xfm
                     fpath_nonlinear,            # output.mnc
                 ]
@@ -316,10 +314,8 @@ def run_old_from_file(
                     fpath_template_mask,
                     "-level",
                     nlr_level,
-                    # fpath_norm,                 # source.mnc
-                    # fpath_template,             # target.mnc
-                    fpath_norm_masked,          # source.mnc
-                    fpath_template_masked,      # target.mnc
+                    fpath_norm_masked,          # source.mnc (masked)
+                    fpath_template_masked,      # target.mnc (masked)
                     fpath_nonlinear_transform,  # output.xfm
                     fpath_nonlinear,            # output.mnc
                 ]

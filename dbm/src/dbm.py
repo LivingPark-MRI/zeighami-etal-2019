@@ -9,12 +9,10 @@ import pandas as pd
 from bids import BIDSLayout
 from bids.layout import parse_file_entities
 
-# import livingpark_utils
 from livingpark_utils.dataset.ppmi import cohort_id as get_cohort_id
 from livingpark_utils.zeighamietal.constants import COL_PAT_ID, COL_VISIT_TYPE
 
 from dbm_old_pipeline import (
-    FNAME_CONTAINER, 
     run_old_from_minc_list, 
     TRACKER_CONFIGS_OLD_PIPELINE,
     QC_FILE_PATTERNS_OLD_PIPELINE,
@@ -50,15 +48,11 @@ from tracker import (
     KW_PIPELINE_COMPLETE, 
     TRACKER_CONFIGS, 
     SUCCESS,
-    # UNAVAILABLE,
 )
 
 # default settings
 DEFAULT_RESET_CACHE = False
 DEFAULT_FNAME_CACHE = ".bidslayout"
-# DEFAULT_FNAME_BIDS_LIST = "bids_list-all.csv"
-# DEFAULT_FNAME_BIDS_LIST_FILTERED = "bids_list.csv"
-# DEFAULT_FNAME_BAD_SCANS = "bad_scans.csv"
 DEFAULT_FNAME_ENV = ".env"
 DEFAULT_DPATH_PIPELINE=Path("/", "ipl", "quarantine", "experimental", "2013-02-15")
 DEFAULT_DPATH_TEMPLATE=Path("/", "ipl", "quarantine", "models", "icbm152_model_09c")
@@ -79,7 +73,6 @@ COL_BIDS_SUBJECT = "subject"
 COL_BIDS_SESSION = "session"
 
 # init
-# FNAME_CONTAINER = "nd-minc_1_9_16-fsl_5_0_11-click_livingpark_pandas_pybids.sif" # TODO remove (?)
 DNAME_SRC = "src"
 FNAME_CLI = "dbm.py"
 DNAME_SCRIPTS = "scripts"
@@ -159,6 +152,14 @@ def bids_list(
     reset_cache: bool, 
     fname_cache: str, 
 ):
+    """Generate a list of paths to all available T1s in a BIDS dataset.
+
+    Required arguments:
+    dpath_dbm : 
+        Path to analysis directory
+    dpath_bids : 
+        Path to BIDS dataset root
+    """
 
     # make sure input directory exists
     if not dpath_bids.exists():
@@ -192,150 +193,20 @@ def bids_list(
         helper.print_outcome(f"Wrote BIDS paths to {fpath_out}")
 
 
-# @cli.command()
-# @click.argument("dpath_dbm", callback=callback_path)
-# @click.argument("fpath_cohort", callback=callback_path)
-# @click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
-# @click.option("--bad-scans", "fname_bad_scans", default=DEFAULT_FNAME_BAD_SCANS,
-#               help="Path to file listing paths of T1s to ignore (e.g. cases with multiple runs)")
-# @click.option("--fname_input", default=DEFAULT_FNAME_BIDS_LIST,
-#               help=f"Name of BIDS list file to filter. Default: {DEFAULT_FNAME_BIDS_LIST}")
-# @click.option("--subject", "col_cohort_subject", default=COL_PAT_ID,
-#               help="Name of subject column in cohort file")
-# @click.option("--session", "col_cohort_session", default=COL_VISIT_TYPE,
-#               help="Name of session column in cohort file")
-# @add_helper_options()
-# @with_helper
-# def bids_filter(
-#     helper: ScriptHelper,
-#     dpath_dbm: Path,
-#     fpath_cohort: Path,
-#     tag: str,
-#     fname_bad_scans: str,
-#     fname_input: str,
-#     col_cohort_subject: str,
-#     col_cohort_session: str,
-# ):
-
-#     session_map = {"BL": "1"}
-
-#     col_fpath = "fpath"
-#     cols_merge = [COL_BIDS_SUBJECT, COL_BIDS_SESSION]
-
-#     # generate paths
-#     if tag is None:
-#         fname_out = DEFAULT_FNAME_BIDS_LIST_FILTERED
-#     else:
-#         fname_out = PATTERN_BIDS_LIST_FILTERED.format(tag)
-#     fpath_out = dpath_dbm / fname_out
-#     fpath_bids_list = dpath_dbm / fname_input
-#     fpath_bad_scans = dpath_dbm / fname_bad_scans
-
-#     def parse_and_add_path(path, col_path=col_fpath):
-#         entities = parse_file_entities(path)
-#         entities[col_path] = path
-#         return entities
-
-#     helper.check_file(fpath_out)
-
-#     df_bids_list = pd.DataFrame(
-#         [
-#             parse_and_add_path(fpath)
-#             for fpath in load_list(fpath_bids_list)
-#             .squeeze("columns")
-#             .tolist()
-#         ]
-#     )
-#     helper.print_info(f"Loaded BIDS list:\t\t{df_bids_list.shape}")
-
-#     df_cohort = pd.read_csv(fpath_cohort)
-#     cohort_id_original = get_cohort_id(df_cohort)
-#     helper.print_info(
-#         f"Loaded cohort info:\t\t{df_cohort.shape} (ID={cohort_id_original})"
-#     )
-
-#     df_cohort[COL_BIDS_SUBJECT] = df_cohort[col_cohort_subject].astype(str)
-#     df_cohort[COL_BIDS_SESSION] = df_cohort[col_cohort_session].map(session_map)
-#     if pd.isna(df_cohort[COL_BIDS_SESSION]).any():
-#         raise RuntimeError(f"Conversion with map {session_map} failed for some rows")
-
-#     subjects_all = set(df_bids_list[COL_BIDS_SUBJECT])
-#     subjects_cohort = set(df_cohort[COL_BIDS_SUBJECT])
-#     subjects_diff = subjects_cohort - subjects_all
-#     if len(subjects_diff) > 0:
-#         helper.echo(
-#             f"{len(subjects_diff)} subjects are not in the BIDS list",
-#             text_color="yellow",
-#         )
-#         # helper.echo(','.join(subjects_diff), text_color='yellow') 
-
-#     # match by subject and ID
-#     df_filtered = df_bids_list.merge(df_cohort, on=cols_merge, how="inner")
-#     helper.print_info(f"Filtered BIDS list:\t\t{df_filtered.shape}")
-
-#     if fpath_bad_scans.exists():
-#         bad_scans = (
-#             load_list(fpath_bad_scans).squeeze("columns").tolist()
-#         )
-#         df_filtered = df_filtered.loc[~df_filtered[col_fpath].isin(bad_scans)]
-#         helper.print_info(
-#             f"Removed up to {len(bad_scans)} bad scans:\t{df_filtered.shape}"
-#         )
-
-#     # find duplicate scans
-#     # go through json sidecar and filter by description
-#     counts = df_filtered.groupby(cols_merge)[cols_merge[0]].count()
-#     with_multiple = counts.loc[counts > 1]
-
-#     dfs_multiple = []
-#     if len(with_multiple) > 0:
-
-#         for subject, session in with_multiple.index:
-
-#             df_multiple = df_filtered.loc[
-#                 (df_filtered[COL_BIDS_SUBJECT] == subject)
-#                 & (df_filtered[COL_BIDS_SESSION] == session)
-#             ]
-
-#             dfs_multiple.append(df_multiple[col_fpath])
-
-#         fpath_bad_scans = Path(DEFAULT_FNAME_BAD_SCANS)
-#         while fpath_bad_scans.exists():
-#             fpath_bad_scans = add_suffix(fpath_bad_scans, sep=None)
-
-#         pd.concat(dfs_multiple).to_csv(fpath_bad_scans, header=False, index=False)
-
-#         helper.print_error(
-#             "Found multiple runs for a single session. "
-#             f"File names written to: {fpath_bad_scans}. "
-#             "You need to manually check these scans, choose at most one to keep, "
-#             f"delete it from {fpath_bad_scans}, "
-#             "then pass that file as input using --bad-scans"
-#         )
-
-#     # print new cohort ID
-#     new_cohort_id = get_cohort_id(
-#         df_filtered.drop_duplicates(subset=col_cohort_subject),
-#     )
-#     helper.echo(f"COHORT_ID={new_cohort_id}", force_color=False)
-
-#     # save
-#     df_filtered[col_fpath].to_csv(fpath_out, index=False, header=False)
-#     helper.print_outcome(f"Wrote filtered BIDS list to: {fpath_out}")
-
-
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
-# @click.option("--info-file", 'fname_loni', default=DEFAULT_FNAME_LONI,
-#               help=f"name of CSV file with subject ID, session and image ID. Default: {DEFAULT_FNAME_LONI}")
 @click.option("--cohort-file", 'fpath_cohort', callback=callback_path,
-              help="path to cohort file. Overrides --tag option")
-@click.option("--mincignore", "fname_mincignore", default=DEFAULT_FNAME_MINCIGNORE)
-@click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
-# @click.option("--convert/--no-convert", default=True)
-@click.option("--from-nifti/--from-dicom", default=False)
-@click.option("--ppmi-nifti/--heudiconv", default=False)
-@click.option("--input-dir", "dname_input", default=DEFAULT_DNAME_INPUT)
+              help="Path to cohort file. Overrides --tag option")
+@click.option("--mincignore", "fname_mincignore", default=DEFAULT_FNAME_MINCIGNORE,
+              help=f"Name of file containing the list of MINC filenames to ignore. Default: {DEFAULT_FNAME_MINCIGNORE}")
+@click.option("--tag", help="Unique tag to differentiate datasets (ex: cohort ID)")
+@click.option("--from-nifti/--from-dicom", default=False, 
+              help="Convert from NIfTI files instead of DICOMs")
+@click.option("--ppmi-nifti/--heudiconv", default=False,
+              help=("Use NIfTI files downloaded from PPMI instead of from a BIDS dataset"
+                    ". Only applies if --from-nifti is provided"))
+@click.option("--input-dir", "dname_input", default=DEFAULT_DNAME_INPUT, 
+              help=f"Name of directory containing all input imaging files. Default: {DEFAULT_DNAME_INPUT}")
 @click.option("--col-subject", "col_cohort_subject", default=COL_PAT_ID,
               help=f"Name of subject column in cohort file. Default: {COL_PAT_ID}")
 @click.option("--col-session", "col_cohort_session", default=COL_VISIT_TYPE,
@@ -352,13 +223,11 @@ def bids_list(
 def pre_run(
     helper: ScriptHelper,
     dpath_dbm: Path,
-    # fname_loni,
     fpath_cohort: Path | None,
     fname_mincignore,
     tag,
     from_nifti,
     ppmi_nifti,
-    # convert,
     dname_input,
     col_cohort_subject,
     col_cohort_session,
@@ -366,6 +235,12 @@ def pre_run(
     dpath_pipeline: Path,
     silent,
 ):
+    """Convert input files to MINC format and ensure there is only one T1 per subject per session.
+
+    Required arguments:
+    dpath_dbm :
+        Path to analysis directory
+    """
     
     def map_session(session):
         try:
@@ -384,9 +259,11 @@ def pre_run(
         entities[col_path] = path
         return entities
 
+    # internal column names (not written)
     col_fpath_nifti = 'fpath_nifti'
     col_fpath_minc = 'fpath_minc'
 
+    # generate paths
     dpath_input: Path = dpath_dbm / dname_input 
     dpath_dicom: Path = dpath_input / DNAME_DICOM_INPUT
     dpath_minc: Path = dpath_input / DNAME_MINC_INPUT
@@ -439,6 +316,8 @@ def pre_run(
             if image_id.startswith('I'):
                 image_id = image_id[1:]
 
+            # check if DICOM Image ID is in the cohort file
+            # if not we just ignore it
             try:
                 subject, session = df_cohort.set_index(col_cohort_image).loc[
                     image_id, 
@@ -452,18 +331,19 @@ def pre_run(
             try:
                 int(subject)
             except TypeError:
-                raise TypeError(f'Subject IDs must be integers (got: {subject})')
+                raise TypeError(f'Subject IDs must be integers (got: {subject} ({type(subject)}))')
 
             session = map_session(session)
 
             fpath_converted = generate_fpath_minc(subject, session, image_id)
-
             helper.mkdir(fpath_converted.parent, exist_ok=True)
 
+            # do not do anything if the expected new file already exists
             if fpath_converted.exists():
                 count_dicoms_skipped += 1
                 continue
 
+            # convert
             helper.run_command(
                 [
                     'dcm2mnc',
@@ -481,14 +361,12 @@ def pre_run(
         helper.print_info(f'Skipped {count_dicoms_skipped} DICOM directories that already existed')
         helper.print_info(f'Ignored {count_dicoms_ignored} DICOM directories that were not in cohort file')
     
+        # create input list for DBM pipeline
         data_minc_list = []
         missing_image_ids = []
         for subject, session, image_id in df_cohort[[col_cohort_subject, col_cohort_session, col_cohort_image]].itertuples(index=False):
             session = map_session(session)
             fpath_minc = generate_fpath_minc(subject, session, image_id)
-
-            # if str(fpath_minc) in fpaths_to_ignore:
-            #     continue
 
             if not fpath_minc.exists():
                 missing_image_ids.append(image_id)
@@ -511,6 +389,7 @@ def pre_run(
         df_cohort[COL_BIDS_SUBJECT] = df_cohort[col_cohort_subject].astype(str)
         df_cohort[COL_BIDS_SESSION] = df_cohort[col_cohort_session].map(COHORT_SESSION_MAP)
 
+        # load BIDS list
         if not ppmi_nifti:
             df_bids_list = pd.DataFrame(
                 [
@@ -534,12 +413,9 @@ def pre_run(
             df_bids_list = None
 
         if ppmi_nifti or len(subjects_diff) > 0:
-            # helper.echo(
-            #     f"{len(subjects_diff)} subjects are not in the BIDS list",
-            #     text_color="yellow",
-            # )
-            # helper.echo(','.join(subjects_diff), text_color='yellow') 
+
             if ppmi_nifti:
+                # all subjects need to be found in the PPMI download directory
                 subjects_diff = set(df_cohort[col_cohort_subject].to_list())
             else:
                 helper.echo(f'{len(subjects_diff)} subjects are not in the BIDS list: {",".join(subjects_diff)}', text_color='yellow')
@@ -548,17 +424,7 @@ def pre_run(
             image_ids_to_download = []
             df_cohort_to_download = df_cohort.loc[df_cohort[col_cohort_subject].isin(subjects_diff), [col_cohort_subject, col_cohort_image, col_cohort_session]]
             for subject, image_id, session in df_cohort_to_download.itertuples(index=False):
-            # for subject in subjects_diff:
-            #     df_cohort_subject = df_cohort.loc[df_cohort[col_cohort_subject] == subject]
-            #     # if len(df_cohort_subject) == 0:
-            #     #     image_ids_to_download.append(subject)
-            #     # elif len(df_cohort_subject) > 1:
-            #     #     raise NotImplementedError(f'Missing BIDS file for a subject with more than 1 file available in PPMI ({subject})')
-                
-            #     for image_id, session in df_cohort_subject[[col_cohort_image, col_cohort_session]].itertuples(index=False):
-                
-                    # image_id = df_cohort_subject[col_cohort_image].item()
-                    # session = df_cohort_subject[col_cohort_session].item()
+
                 fpaths_nifti = list(dpath_nifti.glob(f'**/*/*{image_id}.nii'))
 
                 if len(fpaths_nifti) == 0:
@@ -579,6 +445,7 @@ def pre_run(
         else:
             df_extra_nifti = None
 
+        # concatenate lists of NIfTI files from different sources (BIDS/PPMI)
         df_nifti_list: pd.DataFrame = pd.concat([df_bids_list, df_extra_nifti], axis='index')
 
         # convert to minc
@@ -627,6 +494,8 @@ def pre_run(
     
         df_minc_list = pd.DataFrame(data_minc_list).drop_duplicates()
 
+    # mincignore file is for filtering out specific images
+    # so that only 1 image per subject (per session) is used
     if fpath_mincignore.exists():
         fpaths_to_ignore = pd.read_csv(fpath_mincignore, header=None).iloc[:, 0].to_list()
         fpaths_to_ignore = [Path(fpath) for fpath in fpaths_to_ignore]
@@ -636,6 +505,7 @@ def pre_run(
 
     df_minc_list = df_minc_list.loc[~df_minc_list[col_fpath_minc].isin(fpaths_to_ignore)]
 
+    # check if there are multiple images per subject/session
     counts = df_minc_list.groupby([col_cohort_subject, col_cohort_session])[col_fpath_minc].count()
     with_multiple = counts.loc[counts > 1]
 
@@ -658,7 +528,7 @@ def pre_run(
             "then pass that file as input using --mincignore"
         )
 
-    # print new cohort ID
+    # print new cohort ID (to check if it is the same)
     new_cohort_id = get_cohort_id(
         df_minc_list.drop_duplicates(col_cohort_subject),
     )
@@ -670,7 +540,7 @@ def pre_run(
 
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
-@click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
+@click.option("--tag", help="Unique tag to differentiate datasets (ex: cohort ID)")
 @click.option("--pipeline-dir", "dpath_pipeline", callback=callback_path,
               default=DEFAULT_DPATH_PIPELINE,
               help=f"Path to MINC DBM pipeline directory. Default: {DEFAULT_DPATH_PIPELINE}")
@@ -679,17 +549,26 @@ def pre_run(
               help=f"Path to MNI template (MINC). Default: {DEFAULT_DPATH_TEMPLATE}")
 @click.option("--template", default=DEFAULT_TEMPLATE,
               help=f"MNI template name. Default: {DEFAULT_TEMPLATE}")
-@click.option("--from-nifti/--from-dicom", default=False)
-@click.option("--ppmi-nifti/--heudiconv", default=False)
-@click.option("--old/--no-old", 'use_old_pipeline', default=False)
+@click.option("--from-nifti/--from-dicom", default=False, 
+              help="Convert from NIfTI files instead of DICOMs")
+@click.option("--ppmi-nifti/--heudiconv", default=False,
+              help=("Use NIfTI files downloaded from PPMI instead of from a BIDS dataset"
+                    ". Only applies if --from-nifti is provided"))
+@click.option("--old/--no-old", 'use_old_pipeline', default=False,
+              help="Use reconstructed pipeline instead of author-provided pipeline")
 @click.option("--nlr-level", type=click.FloatRange(min=0.5), default=DEFAULT_NLR_LEVEL,
-              help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}")
+              help=("Level parameter for nonlinear registration"
+                    f". Only used if --old is provided. Default: {DEFAULT_NLR_LEVEL}"))
 @click.option("--dbm-fwhm", type=float, default=DEFAULT_DBM_FWHM,
-              help=f"Blurring kernel for DBM map. Default: {DEFAULT_DBM_FWHM}")
-@click.option("--sge/--no-sge", "with_sge", default=True)
-@click.option("-q", "--queue", "sge_queue", default=DEFAULT_SGE_QUEUE)
-@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
-@click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT)
+              help=("Blurring kernel for DBM map"
+                    f". Only used if --old is provided. Default: {DEFAULT_DBM_FWHM}"))
+@click.option("--sge/--no-sge", "with_sge", default=True, help="Use SGE job scheduler (default)")
+@click.option("-q", "--queue", "sge_queue", default=DEFAULT_SGE_QUEUE, 
+              help=f"Queue name for SGE job scheduler. Default: {DEFAULT_SGE_QUEUE}")
+@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT,
+              help=f"Prefix for output directory name. Default: {DEFAULT_DNAME_OUTPUT}")
+@click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT,
+              help=f"Prefix for QC directory name. Default: {DEFAULT_DNAME_QC_OUT}")
 @add_helper_options()
 @with_helper
 @require_minc
@@ -710,7 +589,14 @@ def run(
     with_sge,
     sge_queue,
 ):
+    """Run the DBM pipeline (using SGE job scheduler by default)
 
+    Required arguments:
+    dpath_dbm :
+        Path to analysis directory
+    """
+
+    # generate paths
     if tag is None:
         fname_minc_list = DEFAULT_FNAME_MINC_LIST
     else:
@@ -732,6 +618,7 @@ def run(
     dpath_output = dpath_dbm / dname_output
     helper.mkdir(dpath_output, exist_ok=True)
 
+    # old pipeline (not author-provided)
     if use_old_pipeline:
         helper.print_info('RUNNING OLD PIPELINE', text_color='yellow')
         helper.print_info(f'Using output directory: {dpath_output}')
@@ -753,6 +640,8 @@ def run(
             nlr_level=nlr_level,
             dbm_fwhm=dbm_fwhm,
         )
+
+    # author-provided pipeline (IPL longitudinal pipeline from Louis Collins lab)
     else:
         check_program("python2", "Python 2")
     
@@ -795,16 +684,21 @@ def run(
 
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
-@click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
+@click.option("--tag", help="Unique tag to differentiate datasets (ex: cohort ID)")
 @click.option("--template-dir", "dpath_template", callback=callback_path,
               default=DEFAULT_DPATH_TEMPLATE, 
               help=f"Path to MNI template (MINC). Default: {DEFAULT_DPATH_TEMPLATE}")
 @click.option("--template", default=DEFAULT_TEMPLATE, 
               help=f"MNI template name. Default: {DEFAULT_TEMPLATE}")
-@click.option("--from-nifti/--from-dicom", default=False)
-@click.option("--ppmi-nifti/--heudiconv", default=False)
-@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
-@click.option("--qc/--no-qc", "with_qc", default=True)
+@click.option("--from-nifti/--from-dicom", default=False, 
+              help="Convert from NIfTI files instead of DICOMs")
+@click.option("--ppmi-nifti/--heudiconv", default=False,
+              help=("Use NIfTI files downloaded from PPMI instead of from a BIDS dataset"
+                    ". Only applies if --from-nifti is provided"))
+@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT,
+              help=f"Prefix for output directory name. Default: {DEFAULT_DNAME_OUTPUT}")
+@click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT,
+              help=f"Prefix for QC directory name. Default: {DEFAULT_DNAME_QC_OUT}")
 @add_silent_option()
 @add_helper_options()
 @with_helper
@@ -821,10 +715,20 @@ def post_run(
     with_qc,
     silent,
 ):
+    """Run post-processing after the author-provided pipeline 
+    (IPL pipeline from Louis Collins lab). Apply MNI template mask 
+    to DBM maps and convert to NIfTI format. Optionally generates QC images
+    for the nonlinear registration step.
+
+    Required arguments:
+    dpath_dbm :
+        Path to analysis directory
+    """
 
     def create_qc_image(fpath, fpath_qc, fpath_mask, title):
         return minc_qc(helper, fpath, fpath_qc, fpath_mask, title, silent=silent)
     
+    # generate paths
     fpath_mask = add_suffix(dpath_template / template, SUFFIX_TEMPLATE_MASK, sep=None).with_suffix(EXT_MINC)
     fpath_outline = add_suffix(dpath_template / template, SUFFIX_TEMPLATE_OUTLINE, sep=None).with_suffix(EXT_MINC)
     for fpath in [fpath_mask, fpath_outline]:
@@ -847,6 +751,7 @@ def post_run(
     fpath_input_list = dpath_dbm / fname_input_list
     dpath_output = dpath_dbm / dname_output
 
+    # loop over each result set one by one
     count_missing = 0
     count_new = 0
     count_existing = 0
@@ -855,6 +760,7 @@ def post_run(
 
         dpath_results = dpath_output / subject / session
 
+        # skip if DBM file does not exist
         fpath_dbm: Path = dpath_results / DNAME_VBM / PATTERN_DBM_FILE.format(subject, session)
         if not fpath_dbm.exists():
             helper.print_info(
@@ -867,16 +773,23 @@ def post_run(
         fpath_dbm_masked = add_suffix(fpath_dbm, suffix=SUFFIX_MASKED)
         fpath_dbm_masked_nifti = fpath_dbm_masked.with_suffix(EXT_NIFTI)
         
+        # post-process if not already done
         if not Path(f"{fpath_dbm_masked_nifti}{EXT_GZIP}").exists():
             fpath_mask_resampled = fpath_dbm.parent / FNAME_MASK
+
+            # resample MNI template mask to match DBM image
             helper.run_command(
                 ['mincresample', '-like', fpath_dbm, fpath_mask, fpath_mask_resampled], 
                 silent=silent,
             )
+
+            # apply mask
             helper.run_command(
                 ['minccalc', '-float', '-expression', 'A[0]*A[1]', fpath_dbm, fpath_mask_resampled, fpath_dbm_masked],
                 silent=silent,
             )
+
+            # convert to NIfTI and zip
             helper.run_command(['mnc2nii', fpath_dbm_masked, fpath_dbm_masked_nifti], silent=silent)
             helper.run_command(['gzip', fpath_dbm_masked_nifti], silent=silent)
             count_new += 1
@@ -893,6 +806,7 @@ def post_run(
             fpath_linear2_qc = dpath_qc / PATTERN_QC_LINEAR2.format(subject, session)
             fpath_nonlinear_qc = dpath_qc / PATTERN_QC_NONLINEAR.format(subject, session)
 
+            # second linear registration
             if fpath_linear2.exists() and not fpath_linear2_qc.exists():
                 create_qc_image(
                     fpath_linear2, 
@@ -902,9 +816,12 @@ def post_run(
                 )
                 count_qc += 1
             
+            # nonlinear registration
             if fpath_nonlinear_transform.exists() and not fpath_nonlinear_qc.exists():
 
                 if not fpath_nonlinear.exists():
+
+                    # apply nonlinear transformation
                     helper.run_command(
                         [
                             "mincresample",
@@ -932,16 +849,24 @@ def post_run(
 
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
-@click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
-@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
-@click.option("--from-nifti/--from-dicom", default=False)
-@click.option("--ppmi-nifti/--heudiconv", default=False)
-@click.option("--old/--no-old", 'use_old_pipeline', default=False)
+@click.option("--tag", help="Unique tag to differentiate datasets (ex: cohort ID)")
+@click.option("--from-nifti/--from-dicom", default=False, 
+              help="Convert from NIfTI files instead of DICOMs")
+@click.option("--ppmi-nifti/--heudiconv", default=False,
+              help=("Use NIfTI files downloaded from PPMI instead of from a BIDS dataset"
+                    ". Only applies if --from-nifti is provided"))
+@click.option("--old/--no-old", 'use_old_pipeline', default=False,
+              help="Use reconstructed pipeline instead of author-provided pipeline")
 @click.option("--nlr-level", type=click.FloatRange(min=0.5), default=DEFAULT_NLR_LEVEL,
-              help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}")
+              help=("Level parameter for nonlinear registration"
+                    f". Only used if --old is provided. Default: {DEFAULT_NLR_LEVEL}"))
 @click.option("--dbm-fwhm", type=float, default=DEFAULT_DBM_FWHM,
-              help=f"Blurring kernel for DBM map. Default: {DEFAULT_DBM_FWHM}")
-@click.option("--write-new-list/--no-write-new-list", default=True)
+              help=("Blurring kernel for DBM map"
+                    f". Only used if --old is provided. Default: {DEFAULT_DBM_FWHM}"))
+@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT,
+              help=f"Prefix for output directory name. Default: {DEFAULT_DNAME_OUTPUT}")
+@click.option("--write-new-list/--no-write-new-list", default=True, 
+              help="Write new input list for failed/missing subjects (default)")
 @add_helper_options()
 @with_helper
 def status(
@@ -956,9 +881,16 @@ def status(
     dbm_fwhm,
     write_new_list,
 ):
+    """Check the DBM processing status and write to CSV file.
+
+    Required arguments:
+    dpath_dbm :
+        Path to analysis directory
+    """
     
     col_input_t1w = 'input_t1w'
 
+    # generate paths
     if tag is None:
         fname_input_list = DEFAULT_FNAME_MINC_LIST
         fname_status = DEFAULT_FNAME_STATUS
@@ -979,12 +911,13 @@ def status(
             fname_status = add_suffix(fname_status, SUFFIX_FROM_NIFTI, sep=None)
             dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
     
+    # old/author-provided pipelines use different trackers
     if use_old_pipeline:
         fname_status = add_suffix(fname_status, SUFFIX_OLD_PIPELINE, sep=None)
         dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
         tracker_configs = TRACKER_CONFIGS_OLD_PIPELINE
         kwargs_tracking = {
-            'nlr_level': nlr_level, # just use defaults
+            'nlr_level': nlr_level,
             'dbm_fwhm': dbm_fwhm,
         }
     else:
@@ -995,6 +928,7 @@ def status(
     fpath_status = dpath_dbm / fname_status
     helper.check_file(fpath_status)
 
+    # check status for each input T1 file
     data_status = []
     for subject, session, input_t1w in load_list(fpath_input_list).itertuples(index=False):
     
@@ -1022,8 +956,9 @@ def status(
     df_status.drop(columns=col_input_t1w).to_csv(fpath_status, index=False, header=True)
     helper.print_outcome(f"Wrote status file to {fpath_status}")
 
+    # write new input file with missing/failed runs
     if write_new_list:
-        fpath_new_list = add_suffix(fpath_input_list, TAG_MISSING) # TODO TAG_MISSING in option (?)
+        fpath_new_list = add_suffix(fpath_input_list, TAG_MISSING)
         if use_old_pipeline:
             fpath_new_list = add_suffix(fpath_new_list, SUFFIX_OLD_PIPELINE, sep=None)
         df_new_list = df_status.loc[
@@ -1037,16 +972,24 @@ def status(
 
 @cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
-@click.option("--tag", help="unique tag to differentiate datasets (ex: cohort ID)")
-@click.option("--from-nifti/--from-dicom", default=False)
-@click.option("--ppmi-nifti/--heudiconv", default=False)
-@click.option("--old/--no-old", 'use_old_pipeline', default=False)
+@click.option("--tag", help="Unique tag to differentiate datasets (ex: cohort ID)")
+@click.option("--from-nifti/--from-dicom", default=False, 
+              help="Convert from NIfTI files instead of DICOMs")
+@click.option("--ppmi-nifti/--heudiconv", default=False,
+              help=("Use NIfTI files downloaded from PPMI instead of from a BIDS dataset"
+                    ". Only applies if --from-nifti is provided"))
+@click.option("--old/--no-old", 'use_old_pipeline', default=False,
+              help="Use reconstructed pipeline instead of author-provided pipeline")
 @click.option("--nlr-level", type=click.FloatRange(min=0.5), default=DEFAULT_NLR_LEVEL,
-              help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}")
+              help=("Level parameter for nonlinear registration"
+                    f". Only used if --old is provided. Default: {DEFAULT_NLR_LEVEL}"))
 @click.option("--dbm-fwhm", type=float, default=DEFAULT_DBM_FWHM,
-              help=f"Blurring kernel for DBM map. Default: {DEFAULT_DBM_FWHM}")
-@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
-@click.option("--tarball-dir", "dname_tar", default=DEFAULT_DNAME_TAR)
+              help=("Blurring kernel for DBM map"
+                    f". Only used if --old is provided. Default: {DEFAULT_DBM_FWHM}"))
+@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT,
+              help=f"Prefix for output directory name. Default: {DEFAULT_DNAME_OUTPUT}")
+@click.option("--tarball-dir", "dname_tar", default=DEFAULT_DNAME_TAR,
+              help=f"Name of directory in which to write the tarball. Default: {DEFAULT_DNAME_TAR}")
 @add_silent_option()
 @add_helper_options()
 @with_helper
@@ -1063,6 +1006,15 @@ def tar(
     dname_tar,
     silent,
 ):
+    """Gather all the successfully processed DBM files, tar them
+    and move them to another directory.
+
+    Required arguments:
+    dpath_dbm :
+        Path to analysis directory
+    """
+
+    # generate paths
     if from_nifti:
         if ppmi_nifti:
             dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI_PPMI, sep=None)
@@ -1088,10 +1040,12 @@ def tar(
     fpath_out = dpath_tar / f'{fname_tar}{EXT_TAR}{EXT_GZIP}'
     helper.check_file(fpath_out)
 
+    # read status and get successfully processed scans
     df_status = pd.read_csv(fpath_status, dtype=str)
     df_status_success = df_status.loc[df_status[KW_PIPELINE_COMPLETE] == SUCCESS]
     helper.print_info(f'Tarring {len(df_status_success)} DBM files')
 
+    # gather paths to DBM files to be used in ICA (masked, NIfTI format)
     data_file_info = []
     for subject, session in df_status_success[[COL_BIDS_SUBJECT, COL_BIDS_SESSION]].itertuples(index=False):
 
@@ -1117,6 +1071,7 @@ def tar(
         if not fpath_dbm_file.exists():
             raise RuntimeError(f'File not found: {fpath_dbm_file}')
         
+        # info file to keep track of which filename goes with which subject/session
         data_file_info.append({
             COL_BIDS_SUBJECT: subject,
             COL_BIDS_SESSION: session,
@@ -1124,7 +1079,7 @@ def tar(
         })
         helper.run_command(['ln', '-s', fpath_dbm_file, dpath_tmp], silent=silent)
 
-    # info file
+    # write info file
     df_file_info = pd.DataFrame(data_file_info)
     df_file_info.to_csv(dpath_tmp / FNAME_INFO, header=True, index=False)
     helper.print_info(f'Info file name: {FNAME_INFO}')
@@ -1140,67 +1095,19 @@ def tar(
 
 
 @cli.command()
-@click.argument("dpath-bids", callback=callback_path)
-@click.option("-f", "--fname-env", default=DEFAULT_FNAME_ENV)
-@add_helper_options()
-@with_helper
-def init_env(
-    dpath_bids: Path,
-    fname_env: str,
-    helper: ScriptHelper,
-):
-    dpath_root = Path(__file__).parents[3]
-
-    if helper.verbose:
-        helper.print_info(
-            f"Generating {fname_env} file:\n"
-            f"- Project root directory: {dpath_root}\n"
-            f"- BIDS directory: {dpath_bids}"
-        )
-
-    # project root directory
-    constants = {
-        "DPATH_ROOT": dpath_root,
-        "DPATH_BIDS": dpath_bids,
-    }
-
-    # MRI processing subdirectory
-    constants["DPATH_MRI_CODE"] = constants["DPATH_ROOT"] / DNAME_SRC
-    constants["FPATH_MRI_CODE"] = constants["DPATH_MRI_CODE"] / FNAME_CLI
-    constants["FPATH_CONTAINER"] = constants["DPATH_MRI_CODE"] / FNAME_CONTAINER
-    constants["DPATH_MRI_SCRIPTS"] = constants["DPATH_MRI_CODE"] / DNAME_SCRIPTS
-
-    # MRI output
-    # constants["DPATH_OUT"] = constants["DPATH_ROOT"] / INIT_DNAME_OUT
-    # constants["DPATH_OUT_DBM"] = constants["DPATH_OUT"] / INIT_DNAME_OUT_DBM
-    constants["FPATH_BIDS_LIST"] = constants["DPATH_OUT_DBM"] / FNAME_BIDS_LIST
-    # constants["FPATH_BIDS_LIST_FILTERED"] = constants["DPATH_OUT_DBM"] / DEFAULT_FNAME_BIDS_LIST_FILTERED
-
-    if not Path(constants["DPATH_MRI_CODE"]).exists():
-        helper.print_error(
-            f'Directory not found: {constants["DPATH_MRI_CODE"]}. '
-            "Make sure root directory is correct."
-        )
-
-    # write dotenv file
-    fpath_out = Path(constants["DPATH_MRI_SCRIPTS"], fname_env)
-    helper.check_file(fpath_out)
-    with fpath_out.open("w") as file_dotenv:
-        for key, value in constants.items():
-            line = f"{key}={value}\n"
-            file_dotenv.write(line)
-
-    helper.print_outcome(f"Variables written to {fpath_out}", text_color="blue")
-
-
-@cli.command()
 @click.argument("dpath_dbm", callback=callback_path)
-@click.argument("sessions", nargs=-1)
-@click.option("--from-nifti/--from-dicom", default=False)
-@click.option("--ppmi-nifti/--heudiconv", default=False)
-@click.option("--old/--no-old", 'use_old_pipeline', default=False)
-@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT)
-@click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT)
+@click.argument("sessions", nargs=-1) # use default is not provided
+@click.option("--from-nifti/--from-dicom", default=False, 
+              help="Convert from NIfTI files instead of DICOMs")
+@click.option("--ppmi-nifti/--heudiconv", default=False,
+              help=("Use NIfTI files downloaded from PPMI instead of from a BIDS dataset"
+                    ". Only applies if --from-nifti is provided"))
+@click.option("--old/--no-old", 'use_old_pipeline', default=False,
+              help="Use reconstructed pipeline instead of author-provided pipeline")
+@click.option("--output-dir", "dname_output", default=DEFAULT_DNAME_OUTPUT,
+              help=f"Prefix for output directory name. Default: {DEFAULT_DNAME_OUTPUT}")
+@click.option("--qc-dir", "dname_qc", default=DEFAULT_DNAME_QC_OUT,
+              help=f"Prefix for QC directory name. Default: {DEFAULT_DNAME_QC_OUT}")
 @add_helper_options()
 @with_helper
 def qc(
@@ -1213,6 +1120,15 @@ def qc(
     dname_output, 
     dname_qc, 
 ):
+    """Gather all QC images into a QC directory (flat list for each step of
+    the DBM pipeline).
+
+    Required arguments:
+    dpath_dbm :
+        Path to analysis directory
+    """
+    
+    # generate paths
     if from_nifti:
         if ppmi_nifti:
             dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI_PPMI, sep=None)
@@ -1221,6 +1137,7 @@ def qc(
             dname_output = add_suffix(dname_output, SUFFIX_FROM_NIFTI, sep=None)
             dname_qc = add_suffix(dname_qc, SUFFIX_FROM_NIFTI, sep=None)
 
+    # different filename patterns for old/author-provided pipelines
     if use_old_pipeline:
         qc_file_patterns = QC_FILE_PATTERNS_OLD_PIPELINE
         dname_output = add_suffix(dname_output, SUFFIX_OLD_PIPELINE, sep=None)
@@ -1236,6 +1153,7 @@ def qc(
 
     helper.mkdir(dpath_qc_out, exist_ok=True)
 
+    # iterate over subjects/sessions and create symlinks
     dpaths_subject = [dpath for dpath in dpath_output.iterdir() if dpath.is_dir()]
     for dpath_subject in dpaths_subject:
         subject = dpath_subject.name
