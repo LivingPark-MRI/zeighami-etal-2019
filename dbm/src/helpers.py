@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import traceback
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Union, TextIO
 
 import click
+import pandas as pd
 
 DEFAULT_VERBOSITY = 2
 PREFIX_RUN = "[RUN] "
@@ -22,19 +24,92 @@ EXT_NIFTI = ".nii"
 EXT_GZIP = ".gz"
 EXT_MINC = ".mnc"
 EXT_TRANSFORM = ".xfm"
+EXT_TAR = ".tar"
+EXT_JPEG = ".jpg"
 SUFFIX_T1 = "T1w"
-SEP_SUFFIX = "."
+SEP_SUFFIX = "-"
 
-SUFFIX_TEMPLATE_MASK = "_mask"  # MNI template naming convention
+# MNI template
+SUFFIX_TEMPLATE_MASK = "_mask"
+SUFFIX_TEMPLATE_OUTLINE = "_outline"
+
+# minctools container
 ENV_VAR_DPATH_SHARE = "MNI_DATAPATH"
 DEFAULT_BEAST_CONF = "default.1mm.conf"
 DEFAULT_TEMPLATE = "mni_icbm152_t1_tal_nlin_sym_09c"
+DEFAULT_NLR_LEVEL = 2.0
+DEFAULT_DBM_FWHM = 1.0
 DNAME_BEAST_LIB = "beast-library-1.1"
 DNAME_TEMPLATE_MAP = {
     "mni_icbm152_t1_tal_nlin_sym_09c": "icbm152_model_09c",
     "mni_icbm152_t1_tal_nlin_sym_09a": "icbm152_model_09a",
+    "mni_icbm152_t1_tal_nlin_asym_09c": "mni_icbm152_nlin_asym_09c",
 }
 
+DNAME_NIHPD = "nihpd_pipeline"
+
+def add_dbm_minc_options():
+    dbm_minc_options = [
+        click.option(
+            "--share-dir",
+            "dpath_share",
+            callback=callback_path,
+            envvar=ENV_VAR_DPATH_SHARE,
+            help="Path to directory containing BEaST library and "
+            f"anatomical models. Uses ${ENV_VAR_DPATH_SHARE} "
+            "environment variable if not specified.",
+        ),
+        click.option(
+            "--template-dir",
+            "dpath_template",
+            callback=callback_path,
+            help="Directory containing anatomical templates.",
+        ),
+        click.option(
+            "--template",
+            default=DEFAULT_TEMPLATE,
+            help="Prefix for anatomical model files. "
+            f"Valid names: {list(DNAME_TEMPLATE_MAP.keys())}. "
+            f"Default: {DEFAULT_TEMPLATE}.",
+        ),
+        click.option(
+            "--beast-lib-dir",
+            "dpath_beast_lib",
+            callback=callback_path,
+            help="Path to library directory for mincbeast.",
+        ),
+        click.option(
+            "--beast-conf",
+            default=DEFAULT_BEAST_CONF,
+            help=(
+                "Name of configuration file for mincbeast. "
+                f"Default: {DEFAULT_BEAST_CONF}."
+            ),
+        ),
+        click.option(
+            "--nlr-level",
+            type=click.FloatRange(min=0.5),
+            default=DEFAULT_NLR_LEVEL,
+            help=f"Level parameter for nonlinear registration. Default: {DEFAULT_NLR_LEVEL}",
+        ),
+        click.option(
+            "--dbm-fwhm",
+            type=float,
+            default=DEFAULT_DBM_FWHM,
+            help=f"Blurring kernel for DBM map. Default: {DEFAULT_DBM_FWHM}",
+        ),
+        click.option(
+            "--save-all/--save-subset",
+            default=False,
+            help="Save all intermediate files.",
+        ),
+        click.option(
+            "--compress-nii/--no-compress-nii",
+            default=True,
+            help="Compress result files.",
+        ),
+    ]
+    return add_options(dbm_minc_options)
 
 def add_suffix(
     path: Union[Path, str],
@@ -59,6 +134,67 @@ def add_suffix(
     return path.parent / f"{stem}{sep}{suffix}{ext}"
 
 
+def check_program(program, program_name=None):
+    if program_name is None:
+        program_name = program
+    try:
+        subprocess.check_output(['which', program])
+    except subprocess.CalledProcessError:
+        raise RuntimeError(
+            f"This function requires {program_name}, "
+            "which does not appear to be installed",
+        )
+
+
+def minc_qc(helper: ScriptHelper, fpath, fpath_qc, fpath_mask, title, silent=False):
+    if not fpath_qc.suffix == EXT_JPEG:
+        fpath_qc = Path(f'{fpath_qc}{EXT_JPEG}')
+    helper.run_command(
+        [
+            "minc_qc.pl",
+            fpath,
+            fpath_qc,
+            "--title", title,
+            "--image-range", 0, 120,
+            "--mask", fpath_mask,
+            "--big",
+            "--clamp",
+        ],
+        silent=silent,
+    )
+
+
+def load_list(fpath: Path | str, names=None) -> pd.DataFrame:
+    return pd.read_csv(fpath, header=None, dtype=str, names=names)
+
+
+def requires_program(func, program, program_name=None):
+
+    @wraps(func)
+    def _requires_program(*args, **kwargs):
+        check_program(program, program_name)
+        func(*args, **kwargs)
+        
+    return _requires_program
+
+
+def require_minc(func):
+    return requires_program(func, 'mincinfo', 'MINC tools')
+
+
+def check_nihpd_pipeline(dpath_pipeline):
+
+    fpath_to_source: Path = dpath_pipeline / "init.sh"
+    if not Path(fpath_to_source).exists():
+        raise FileNotFoundError(fpath_to_source)
+    
+    pythonpath = os.environ.get('PYTHONPATH')
+    if (pythonpath is None) or not DNAME_NIHPD in pythonpath:
+        raise RuntimeError(
+            "PYTHONPATH environment variable not set correctly. "
+            f"Make sure to source {fpath_to_source} before running")
+
+
 def process_path(path: str) -> Path:
     return Path(path).expanduser().resolve()
 
@@ -72,10 +208,13 @@ def add_options(options):
     return _add_options
 
 
-def add_common_options():
+def add_helper_options():
     common_options = [
         click.option(
             "--logfile", "fpath_log", callback=callback_path, help="Path to log file"
+        ),
+        click.option(
+            "--log-append/--no-log-append", default=True, help="Whether to append instead of overwriting log file"
         ),
         click.option(
             "--overwrite/--no-overwrite",
@@ -107,55 +246,13 @@ def add_common_options():
     return add_options(common_options)
 
 
-def add_dbm_minc_options():
-    dbm_minc_options = [
+def add_silent_option():
+    return add_options([
         click.option(
-            "--share-dir",
-            "dpath_share",
-            callback=callback_path,
-            envvar=ENV_VAR_DPATH_SHARE,
-            help="Path to directory containing BEaST library and "
-            f"anatomical models. Uses ${ENV_VAR_DPATH_SHARE} "
-            "environment variable if not specified.",
-        ),
-        click.option(
-            "--template-dir",
-            "dpath_templates",
-            callback=callback_path,
-            help="Directory containing anatomical templates.",
-        ),
-        click.option(
-            "--template",
-            "template_prefix",
-            default=DEFAULT_TEMPLATE,
-            help="Prefix for anatomical model files. "
-            f"Valid names: {list(DNAME_TEMPLATE_MAP.keys())}. "
-            f"Default: {DEFAULT_TEMPLATE}.",
-        ),
-        click.option(
-            "--beast-lib-dir",
-            "dpath_beast_lib",
-            callback=callback_path,
-            help="Path to library directory for mincbeast.",
-        ),
-        click.option(
-            "--beast-conf",
-            default=DEFAULT_BEAST_CONF,
-            help="Name of configuration file for mincbeast. "
-            f"Default: {DEFAULT_BEAST_CONF}.",
-        ),
-        click.option(
-            "--save-all/--save-subset",
-            default=False,
-            help="Save all intermediate files.",
-        ),
-        click.option(
-            "--compress-nii/--no-compress-nii",
-            default=True,
-            help="Compress result files.",
-        ),
-    ]
-    return add_options(dbm_minc_options)
+            "--silence-commands/--no-silence-commands", "silent", 
+            default=True, 
+            help="Whether to silence intermediate shell command outputs")
+    ])
 
 
 def callback_path(ctx, param, value):
@@ -168,6 +265,7 @@ def with_helper(func):
     @wraps(func)
     def _with_helper(
         fpath_log: Path = None,
+        log_append: bool = True,
         verbosity: int = DEFAULT_VERBOSITY,
         quiet: bool = False,
         dry_run: bool = False,
@@ -183,7 +281,11 @@ def with_helper(func):
             fpath_log.parent.mkdir(parents=True, exist_ok=True)
 
         with TemporaryDirectory() as dpath_tmp:
-            with fpath_log.open("w") if with_log else nullcontext() as file_log:
+            if log_append:
+                mode = "a"
+            else:
+                mode = "w"
+            with fpath_log.open(mode) if with_log else nullcontext() as file_log:
                 helper = ScriptHelper(
                     file_log=file_log,
                     verbosity=verbosity,
@@ -228,34 +330,39 @@ def check_dbm_inputs(func):
     @wraps(func)
     def _check_dbm_inputs(
         helper: ScriptHelper,
-        dpath_share: Union[None, Path] = None,
-        dpath_templates: Union[None, Path] = None,
-        template_prefix: str = DEFAULT_TEMPLATE,
-        dpath_beast_lib: str = DNAME_BEAST_LIB,
-        beast_conf: str = DEFAULT_BEAST_CONF,
+        dpath_share: Path,
+        dpath_template: Path,
+        template: str,
+        dpath_beast_lib: Path,
+        beast_conf: str,
         **kwargs,
     ):
 
         # make sure necessary paths are given
-        if dpath_share is None and (dpath_templates is None or dpath_beast_lib is None):
+        if dpath_share is None and (dpath_template is None or dpath_beast_lib is None):
             raise ValueError(
                 "If --share-dir is not given, both "
                 "--template-dir and --beast-lib-dir "
                 "must be specified."
             )
-        if dpath_templates is None:
-            dpath_templates = dpath_share / DNAME_TEMPLATE_MAP[template_prefix]
+        if dpath_template is None:
+            dpath_template = dpath_share / DNAME_TEMPLATE_MAP[template]
         if dpath_beast_lib is None:
             dpath_beast_lib = dpath_share / DNAME_BEAST_LIB
 
         # generate paths for template files and make sure they are valid
-        fpath_template = dpath_templates / f"{template_prefix}{EXT_MINC}"
+        fpath_template = dpath_template / f"{template}{EXT_MINC}"
         fpath_template_mask = add_suffix(fpath_template, SUFFIX_TEMPLATE_MASK, sep=None)
+        fpath_template_outline = add_suffix(fpath_template, SUFFIX_TEMPLATE_OUTLINE, sep=None)
         if not fpath_template.exists():
             raise FileNotFoundError(f"Template file not found: {fpath_template}")
         if not fpath_template_mask.exists():
             raise FileNotFoundError(
                 f"Template mask file not found: {fpath_template_mask}"
+            )
+        if not fpath_template_outline.exists():
+            raise FileNotFoundError(
+                f"Template outline file not found: {fpath_template_outline}"
             )
 
         # make sure beast library and config file can be found
@@ -269,10 +376,11 @@ def check_dbm_inputs(func):
 
         func(
             helper=helper,
-            dpath_templates=dpath_templates,
-            template_prefix=template_prefix,
+            dpath_template=dpath_template,
+            template=template,
             fpath_template=fpath_template,
             fpath_template_mask=fpath_template_mask,
+            fpath_template_outline=fpath_template_outline,
             dpath_beast_lib=dpath_beast_lib,
             fpath_conf=fpath_conf,
             **kwargs,
@@ -425,9 +533,8 @@ class ScriptHelper:
         if force or (not self.dry_run):
             if stdout is None:
                 if silent or self.verbosity < 2:
-                    # note: this doesn't silence everything because some MINC
-                    #       tools print a lot of output to stderr
                     stdout = subprocess.DEVNULL
+                    stderr = subprocess.DEVNULL
                 else:
                     stdout = self.file_log
             if stderr is None:

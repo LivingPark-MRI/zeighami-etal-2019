@@ -14,7 +14,16 @@ __pycache__
 # environment variables
 .env
 
-# DBM-ICA output files
+# DBM-ICA input/output files
+downloads
+bids
+input*
+output*
+mincignore*
+minc_list*
+status*
+qc*
+tarballs
 out*
 bad_scans*.csv
 
