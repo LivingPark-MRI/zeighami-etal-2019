@@ -1,0 +1,6 @@
+nibabel
+jupyter
+h5py
+nilearn
+matplotlib
+boutiques
